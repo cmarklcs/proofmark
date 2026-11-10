@@ -200,6 +200,7 @@ const S={uid:null,db:null,sample:null,downloads:null,imgLimits:null,dbStatus:"lo
   list:[],cur:null,tab:"insights",sel:null,
   pages:[],perStudent:1,detail:true,tier:"default",grading:null,
   pageMap:{}, saving:0, reteachBusy:false, keyBusy:false, stdBusy:false,
+  copy:{score:true,items:false},
   toddle:{ctx:null,roster:null,busy:false,msg:"",withFeedback:true,results:null},
   gen:{kind:"worksheet",topic:"",course:"",count:8,difficulty:"Mixed, easy to hard",fromGaps:true,busy:false,result:null}};
 
@@ -647,7 +648,7 @@ function viewInsights(a){
    ${a.reteach?`<div class="md">${md(a.reteach)}</div>`:`<p class="muted">Claude names the misconceptions behind the errors, writes a reteach activity for every question where points were lost, and groups students for small-group work.</p>`}
   </div>
   ${viewToddle(a)}
-  <div class="panel spread"><div><h3>Export</h3><span class="small muted">Gradebook as CSV; feedback as a printable page, one student per sheet.</span></div><div class="row"><button class="btn" data-act="csv">Gradebook CSV</button><button class="btn" data-act="fb1">Feedback with scores</button><button class="btn" data-act="fb0">Feedback only</button></div></div>`;
+  <div class="panel spread"><div><h3>Export</h3><span class="small muted">Gradebook as CSV; feedback as a printable page, one student per sheet.</span></div><div class="row"><button class="btn" data-act="csv">Gradebook CSV</button><button class="btn" data-act="fb1">Feedback with scores</button><button class="btn" data-act="fb0">Feedback only</button><button class="btn" data-act="copyall">Copy all feedback</button></div></div>`;
 }
 
 
@@ -694,6 +695,23 @@ function viewToddle(a){
   </div>`;
 }
 
+
+/* ---------- copy feedback as plain text (for pasting into Toddle or any gradebook) ---------- */
+function feedbackText(s,a){const f=s.feedback||{},o=S.copy;const L=[];
+  L.push(o.score?`${s.name}: ${fmt(total(s))} / ${maxPts(a)} (${pct(total(s),maxPts(a))}%)`:s.name);
+  if(f.glow)L.push("","What you did well:",f.glow);
+  if(f.grow)L.push("","Your next focus:",f.grow);
+  if((f.next_steps||[]).length)L.push("","Next steps:",...f.next_steps.map((n,i)=>`${i+1}. ${n}`));
+  if(f.hint)L.push("","Try this:",f.hint);
+  if(o.items){const rows=s.items.filter(i=>i.comment);if(rows.length)L.push("","Question by question:",...rows.map(i=>`Q${i.q}${o.score?` (${fmt(i.earned)}/${i.max})`:""}: ${i.comment}`))}
+  return L.join("\n")}
+async function copyText(text,okMsg){
+  try{await navigator.clipboard.writeText(text);toast(okMsg||"Copied");return true}catch(e){}
+  const lb=document.createElement("div");lb.className="lightbox";
+  lb.innerHTML=`<div class="panel stack" style="max-width:640px;width:100%"><b>Your browser blocked automatic copying. Select all and copy:</b><textarea id="cp-fallback" rows="14" readonly></textarea><div><button class="btn primary" id="cp-close">Done</button></div></div>`;
+  document.body.appendChild(lb);const t=lb.querySelector("#cp-fallback");t.value=text;t.focus();t.select();
+  lb.querySelector("#cp-close").onclick=()=>lb.remove();return false}
+
 function viewStudents(a){
   if(!a.students.length)return `<div class="panel empty stack"><h2>No students graded yet</h2><div><button class="btn primary" data-tab="grade">Scan student work</button></div></div>`;
   const list=[...a.students].sort((x,y)=>x.name.localeCompare(y.name));if(!S.sel||!a.students.find(s=>s.id===S.sel))S.sel=list[0].id;
@@ -712,7 +730,8 @@ function viewStudents(a){
      <td><textarea rows="2" data-ii="${k}" data-if="comment" ${ro}>${esc(i.comment)}</textarea></td></tr>`).join("")}
     </tbody></table></div>
    </div>
-   <div class="panel stack fb"><h2>Feedback for ${esc(s.name.split(" ")[0])}</h2>
+   <div class="panel stack fb"><div class="spread"><h2>Feedback for ${esc(s.name.split(" ")[0])}</h2><div class="row"><button class="btn primary" data-act="copyone">Copy feedback</button><button class="btn" data-act="copynext">Copy & next student</button></div></div>
+    <div class="row small" style="gap:16px"><label class="row" style="gap:6px"><input type="checkbox" id="cp-score" style="width:auto" ${S.copy.score?"checked":""}> Include score</label><label class="row" style="gap:6px"><input type="checkbox" id="cp-items" style="width:auto" ${S.copy.items?"checked":""}> Include note for each question</label><span class="muted">Copies one block of plain text, ready to paste.</span></div>
     <label class="f">What you did well<textarea data-fb="glow" ${ro}>${esc(s.feedback.glow)}</textarea></label>
     <label class="f">Your next focus<textarea data-fb="grow" ${ro}>${esc(s.feedback.grow)}</textarea></label>
     <label class="f">Next steps (one per line)<textarea data-fb="next_steps" ${ro}>${esc(s.feedback.next_steps.join("\n"))}</textarea></label>
@@ -755,6 +774,11 @@ document.addEventListener("click",e=>{
   else if(act==="gensave"){const d=S.gen.result&&S.gen.result.data;if(d)save(safe(d.title||S.gen.kind)+".html",genHtml())}
   else if(act==="csv")exportCsv();
   else if(act==="fb1")exportFeedback(true);
+  else if(act==="copyone"){const s=a.students.find(x=>x.id===S.sel);if(s)copyText(feedbackText(s,a),"Copied feedback for "+s.name)}
+  else if(act==="copynext"){const list=[...a.students].sort((x,y)=>x.name.localeCompare(y.name));const i=list.findIndex(x=>x.id===S.sel);const s=list[i];
+    if(s)copyText(feedbackText(s,a),"Copied "+s.name+(list[i+1]?". Next: "+list[i+1].name:". That was the last student."));
+    if(list[i+1]){S.sel=list[i+1].id;render();window.scrollTo(0,0)}}
+  else if(act==="copyall"){const list=[...a.students].sort((x,y)=>x.name.localeCompare(y.name));copyText(list.map(s=>feedbackText(s,a)).join("\n\n----------\n\n"),"Copied feedback for "+list.length+" students")}
   else if(act==="fb0")exportFeedback(false);
 });
 $("#picker").addEventListener("change",e=>{S.confirmDel=false;const id=e.target.value;if(id==="__demo"){S.cur=DEMO;S.tab="insights";render()}else{S.tab=S.tab;openAssessment(id)}});
@@ -777,6 +801,8 @@ document.addEventListener("change",e=>{const el=e.target;const a=S.cur;
   else if(el.id==="gen-diff"){S.gen.difficulty=el.value}
   else if(el.id==="gen-gaps"){S.gen.fromGaps=el.checked}
   else if(el.id==="td-fb"){S.toddle.withFeedback=el.checked}
+  else if(el.id==="cp-score"){S.copy.score=el.checked}
+  else if(el.id==="cp-items"){S.copy.items=el.checked}
   else if(el.dataset.tdSid&&a&&!a.demo){const s=a.students.find(x=>x.id===el.dataset.tdSid);if(s){s.toddleId=el.value||null;S.toddle.results=null;saveStudentSoon(s);render()}}
   else if(el.id==="g-per"){S.perStudent=+el.value;renderGroups();renderProgress()}
   else if(el.id==="g-detail"){S.detail=el.value==="1"}

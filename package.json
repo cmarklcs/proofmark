@@ -1,0 +1,21 @@
+{
+  "name": "proofmark",
+  "version": "1.0.0",
+  "description": "Grade handwritten math assessments with Claude: Common Core mapping, misconception insights, student feedback.",
+  "main": "server.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node server.js",
+    "dev": "node --env-file-if-exists=.env server.js"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.7.0",
+    "express": "^5.3.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}

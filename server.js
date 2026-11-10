@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { mountLti, makeSigner, ltiEnabled } from "./lti.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -27,14 +28,17 @@ const token = () => crypto.createHmac("sha256", SECRET).update("ok").digest("hex
 function cookies(req) {
   return Object.fromEntries((req.headers.cookie || "").split(";").map(c => c.trim().split("=")).filter(p => p[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join("="))]));
 }
+const signer = makeSigner(SECRET);
 function authed(req) {
+  const lti = signer.read(req.get("x-lti-session"));
+  if (lti && lti.lti) return true;
   if (!ACCESS_CODE) return true;
   const t = cookies(req).pm_auth || "";
   const want = token();
   return t.length === want.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(want));
 }
 const attempts = new Map(); // ip -> {n, until}
-app.get("/api/session", (req, res) => res.json({ ok: authed(req), codeRequired: !!ACCESS_CODE }));
+app.get("/api/session", (req, res) => res.json({ ok: authed(req), codeRequired: !!ACCESS_CODE, toddle: ltiEnabled() }));
 app.post("/api/login", (req, res) => {
   const ip = req.ip || "?";
   const a = attempts.get(ip) || { n: 0, until: 0 };
@@ -93,6 +97,9 @@ app.post("/api/claude", async (req, res) => {
     res.status(502).json({ code: "upstream_error", message: "Couldn't reach Claude. Try again." });
   }
 });
+
+/* ---------- Toddle (LTI 1.3) ---------- */
+mountLti(app, { signer, express });
 
 /* ---------- static app ---------- */
 app.use(express.static(path.join(here, "public"), { extensions: ["html"] }));

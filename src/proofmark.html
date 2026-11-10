@@ -199,6 +199,7 @@ const S={uid:null,db:null,sample:null,downloads:null,imgLimits:null,dbStatus:"lo
   list:[],cur:null,tab:"insights",sel:null,
   pages:[],perStudent:1,detail:true,tier:"default",grading:null,
   pageMap:{}, saving:0, reteachBusy:false, keyBusy:false, stdBusy:false,
+  toddle:{ctx:null,roster:null,busy:false,msg:"",withFeedback:true,results:null},
   gen:{kind:"worksheet",topic:"",course:"",count:8,difficulty:"Mixed, easy to hard",fromGaps:true,busy:false,result:null}};
 
 /* ---------- utils ---------- */
@@ -527,6 +528,7 @@ function render(){renderPicker();renderTabs();setSave();
   const m=$("#main");const a=S.cur;
   if(!a){m.innerHTML=`<div class="panel empty stack"><h2>No assessment open</h2><p class="muted">Create one to start grading.</p><div><button class="btn primary" data-act="new">New assessment</button></div></div>`;return}
   let h="";
+  if(window.proofmarkLti&&S.toddle.ctx)h+=`<div class="note">Opened from Toddle${S.toddle.ctx.className?": <b>"+esc(S.toddle.ctx.className)+"</b>":""}. After grading, send scores to the Toddle gradebook from Class insights.</div>`;
   if(a.demo)h+=`<div class="note warn"><span class="pill ex">Example</span> This is a made-up class so you can see what Proofmark produces. Choose <b>New assessment</b> to grade your own.</div>`;
   if(S.dbStatus==="slow")h+=`<div class="note warn">Your saved assessments can't be reached yet. Grading still works; results will save when the connection returns.</div>`;
   if(S.dbStatus==="off"&&!a.demo)h+=`<div class="note warn">Saving isn't available in this view, so results last until you close the page. Export the gradebook before leaving.</div>`;
@@ -643,7 +645,52 @@ function viewInsights(a){
   <div class="panel stack"><div class="spread"><h2>Reteach plan</h2>${a.reteach&&!a.demo?`<button class="btn sm" data-act="reteachdl">Save as page</button>`:""}${a.demo?"":`<button class="btn ${a.reteach?"":"primary"}" data-act="reteach" ${S.reteachBusy||!S.sample?"disabled":""}>${S.reteachBusy?"Planning…":a.reteach?"Rebuild plan":"Build a reteach plan"}</button>`}</div>
    ${a.reteach?`<div class="md">${md(a.reteach)}</div>`:`<p class="muted">Claude names the misconceptions behind the errors, writes a reteach activity for every question where points were lost, and groups students for small-group work.</p>`}
   </div>
+  ${viewToddle(a)}
   <div class="panel spread"><div><h3>Export</h3><span class="small muted">Gradebook as CSV; feedback as a printable page, one student per sheet.</span></div><div class="row"><button class="btn" data-act="csv">Gradebook CSV</button><button class="btn" data-act="fb1">Feedback with scores</button><button class="btn" data-act="fb0">Feedback only</button></div></div>`;
+}
+
+
+/* ---------- Toddle gradebook (only when opened from Toddle on the hosted version) ---------- */
+function tdNorm(x){return String(x||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z ]+/g," ").trim().split(/\s+/).filter(Boolean)}
+function tdMatch(a){const R=S.toddle.roster||[];const used=new Set(a.students.map(s=>s.toddleId).filter(Boolean));
+  const firstCount={};for(const r of R){const f=tdNorm(r.given||r.name)[0];if(f)firstCount[f]=(firstCount[f]||0)+1}
+  let n=0;for(const s of a.students){if(s.toddleId&&R.some(r=>r.id===s.toddleId))continue;const t=tdNorm(s.name);if(!t.length)continue;
+    let best=null,bs=0,tie=false;
+    for(const r of R){if(used.has(r.id))continue;const rn=tdNorm(r.name),rf=tdNorm(r.given)[0]||rn[0],rl=tdNorm(r.family).slice(-1)[0]||rn.slice(-1)[0];let sc=0;
+      if(t.join(" ")===rn.join(" "))sc=3;else if(t[0]===rf&&t.length>1&&rl&&t[t.length-1][0]===rl[0])sc=2.5;else if(t[0]===rf&&firstCount[rf]===1)sc=1.5;
+      if(sc>bs){bs=sc;best=r;tie=false}else if(sc&&sc===bs)tie=true}
+    if(best&&!tie){s.toddleId=best.id;used.add(best.id);saveStudentSoon(s);n++}}
+  return n}
+async function tdLoadRoster(){const a=S.cur;S.toddle.busy=true;S.toddle.msg="";render();
+  try{const r=await window.proofmarkLti.roster();S.toddle.roster=r.students||[];const n=tdMatch(a);S.toddle.msg=`Loaded ${S.toddle.roster.length} students from Toddle and matched ${n} automatically. Check the matches below.`}
+  catch(e){S.toddle.msg=e.message||"Couldn't load the class list."}
+  S.toddle.busy=false;render()}
+function tdComment(s){const f=s.feedback||{};return [f.glow,f.grow?"Next focus: "+f.grow:"",(f.next_steps||[]).length?"Next steps: "+f.next_steps.join("; "):"",f.hint?"Try this: "+f.hint:""].filter(Boolean).join("\n")}
+async function tdSend(){const a=S.cur;const ready=a.students.filter(s=>s.toddleId);if(!ready.length)return;S.toddle.busy=true;S.toddle.msg="";render();
+  try{const r=await window.proofmarkLti.sendScores({label:a.title,resourceId:"proofmark-"+a.id,scoreMaximum:maxPts(a),scores:ready.map(s=>({userId:s.toddleId,scoreGiven:total(s),comment:S.toddle.withFeedback?tdComment(s):""}))});
+    const ok=r.results.filter(x=>x.ok).length;S.toddle.results=Object.fromEntries(r.results.map(x=>[x.userId,x]));
+    for(const s of ready){const x=S.toddle.results[s.toddleId];if(x&&x.ok){s.toddleSentAt=Date.now();saveStudentSoon(s)}}
+    S.toddle.msg=`Sent ${ok} of ${ready.length} scores to the Toddle gradebook${ok<ready.length?". Some failed; see below.":"."}`}
+  catch(e){S.toddle.msg=e.message||"Couldn't send scores."}
+  S.toddle.busy=false;render()}
+function viewToddle(a){
+  if(!window.proofmarkLti||a.demo||!a.students.length)return "";
+  const T=S.toddle,R=T.roster;const ctx=T.ctx||{};const M=maxPts(a);
+  const counts={};for(const s of a.students)if(s.toddleId)counts[s.toddleId]=(counts[s.toddleId]||0)+1;
+  const dup=Object.values(counts).some(n=>n>1);const ready=a.students.filter(s=>s.toddleId).length;
+  const missing=R?R.filter(r=>!counts[r.id]):[];
+  return `<div class="panel stack"><div class="spread"><h2>Toddle gradebook</h2><span class="small muted">${esc(ctx.className||"Toddle class")}${ctx.assignment?" · "+esc(ctx.assignment):""}</span></div>
+   ${T.msg?`<div class="note ${/couldn|fail|turn on/i.test(T.msg)?"warn":""}">${esc(T.msg)}</div>`:""}
+   ${!R?`<div class="row"><button class="btn primary" data-act="tdroster" ${T.busy?"disabled":""}>${T.busy?"Loading…":"Load class list from Toddle"}</button><span class="small muted">Matches the names Claude read on each paper to your Toddle roster.</span></div>`:`
+   <div class="tablebox"><table><thead><tr><th>Name on paper</th><th>Score</th><th>Toddle student</th><th></th></tr></thead><tbody>
+   ${[...a.students].sort((x,y)=>x.name.localeCompare(y.name)).map(s=>{const x=T.results&&s.toddleId&&T.results[s.toddleId];return `<tr><td>${esc(s.name)}</td><td class="num">${fmt(total(s))} / ${M}</td>
+     <td><select data-td-sid="${esc(s.id)}" aria-label="Toddle student for ${esc(s.name)}"><option value="">Don't send</option>${R.map(r=>`<option value="${esc(r.id)}" ${s.toddleId===r.id?"selected":""}>${esc(r.name)}</option>`).join("")}</select></td>
+     <td>${s.toddleId&&counts[s.toddleId]>1?'<span class="pill bad">Matched twice</span>':x?(x.ok?'<span class="pill good">Sent</span>':`<span class="pill bad" title="${esc(x.message||"")}">Failed</span>`):s.toddleSentAt?'<span class="pill">Sent before</span>':""}</td></tr>`}).join("")}
+   </tbody></table></div>
+   ${missing.length?`<div class="small muted">No graded paper for: ${esc(missing.map(r=>r.name).join(", "))}</div>`:""}
+   <label class="row small" style="gap:8px"><input type="checkbox" id="td-fb" style="width:auto" ${T.withFeedback?"checked":""}> Include each student's feedback as a comment in Toddle</label>
+   <div class="row"><button class="btn primary" data-act="tdsend" ${T.busy||!ready||dup?"disabled":""}>${T.busy?"Sending…":`Send ${ready} score${ready===1?"":"s"} to Toddle`}</button><button class="btn" data-act="tdroster" ${T.busy?"disabled":""}>Reload class list</button>${dup?'<span class="small" style="color:var(--bad)">Fix students matched twice first.</span>':`<span class="small muted">Scores go in as ${fmt(M)}-point grades in a "${esc(a.title)}" column. Sending again updates them.</span>`}</div>`}
+  </div>`;
 }
 
 function viewStudents(a){
@@ -695,6 +742,8 @@ document.addEventListener("click",e=>{
   else if(act==="delS"){if(S.confirmDelS!==b.dataset.sid){S.confirmDelS=b.dataset.sid;render();return}
     a.students=a.students.filter(s=>s.id!==b.dataset.sid);deleteStudentDoc(b.dataset.sid);for(const k in S.pageMap)if(S.pageMap[k].sid===b.dataset.sid)delete S.pageMap[k];S.confirmDelS=null;S.sel=null;render()}
   else if(act==="reteach")reteachPlan();
+  else if(act==="tdroster")tdLoadRoster();
+  else if(act==="tdsend")tdSend();
   else if(act==="mapstd")mapStandards();
   else if(act==="rebuildkey")rebuildKey();
   else if(act==="reteachdl"){save(safe(a.title)+"-reteach-plan.html",`<!doctype html><html><head><meta charset="utf-8"><title>Reteach plan</title><style>body{font:15px/1.55 system-ui,sans-serif;color:#1a2232;max-width:760px;margin:24px auto;padding:0 16px}h4{font-size:17px;margin:20px 0 6px;color:#2a4fd6}</style></head><body><h1>Reteach plan: ${esc(a.title)}</h1>${md(a.reteach)}</body></html>`)}
@@ -726,6 +775,8 @@ document.addEventListener("change",e=>{const el=e.target;const a=S.cur;
   if(el.id==="k-level"&&a&&!a.demo){a.level=el.value;saveKeySoon()}
   else if(el.id==="gen-diff"){S.gen.difficulty=el.value}
   else if(el.id==="gen-gaps"){S.gen.fromGaps=el.checked}
+  else if(el.id==="td-fb"){S.toddle.withFeedback=el.checked}
+  else if(el.dataset.tdSid&&a&&!a.demo){const s=a.students.find(x=>x.id===el.dataset.tdSid);if(s){s.toddleId=el.value||null;S.toddle.results=null;saveStudentSoon(s);render()}}
   else if(el.id==="g-per"){S.perStudent=+el.value;renderGroups();renderProgress()}
   else if(el.id==="g-detail"){S.detail=el.value==="1"}
   else if(el.id==="g-tier"){S.tier=el.value}
@@ -739,6 +790,7 @@ const _render=render;render=function(){_render();if(S.tab==="grade"){renderProgr
 
 /* ---------- boot ---------- */
 S.cur=DEMO;render();
+if(window.proofmarkLti)window.proofmarkLti.context().then(c=>{S.toddle.ctx=c;render()}).catch(()=>{});
 (async()=>{
   const C=window.claude;if(!C||!C.use){S.dbStatus="off";render();return}
   const [user,db,sample,downloads]=await Promise.all(["user","db","sample","downloads"].map(n=>C.use(n).catch(()=>null)));

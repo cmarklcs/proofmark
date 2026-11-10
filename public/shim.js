@@ -10,6 +10,26 @@ window.PROOFMARK_HOSTED = true;
   const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
   const fail = (code, message) => Promise.reject({ code, message });
 
+  /* ---------- Toddle launch session (LTI) ---------- */
+  let LTI = null;
+  try { const u = new URL(location.href); const t = u.searchParams.get("lti");
+    if (t) { LTI = t; try { sessionStorage.setItem("pm_lti", t); } catch {} u.searchParams.delete("lti"); history.replaceState(null, "", u.pathname + u.search + u.hash); }
+    else { try { LTI = sessionStorage.getItem("pm_lti"); } catch {} } } catch {}
+  const H = () => (LTI ? { "x-lti-session": LTI } : {});
+  let ltiInfo = null; try { ltiInfo = LTI ? JSON.parse(atob(LTI.split(".")[0].replace(/-/g, "+").replace(/_/g, "/"))) : null; } catch {}
+  const ltiUserId = ltiInfo ? "t" + Array.from(String(ltiInfo.sub)).reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36) : "local";
+  async function api(path, init = {}) {
+    const r = await fetch(path, { ...init, headers: { ...(init.headers || {}), ...H() } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw { message: body.message || "Request failed (" + r.status + ")" };
+    return body;
+  }
+  window.proofmarkLti = LTI ? {
+    context: () => api("/api/lti/context"),
+    roster: () => api("/api/lti/roster"),
+    sendScores: payload => api("/api/lti/scores", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }),
+  } : null;
+
   /* ---------- access code gate ---------- */
   function overlay(msg) {
     return new Promise(resolve => {
@@ -34,7 +54,7 @@ window.PROOFMARK_HOSTED = true;
       if (document.body) show(); else document.addEventListener("DOMContentLoaded", show);
     });
   }
-  const ready = fetch("/api/session").then(r => r.json()).then(s => s.ok || overlay()).catch(() => overlay("Couldn't reach the server. Check your connection."));
+  const ready = fetch("/api/session", { headers: H() }).then(r => r.json()).then(s => s.ok || overlay()).catch(() => overlay("Couldn't reach the server. Check your connection."));
 
   /* ---------- sample ---------- */
   const toB64 = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = rej; fr.readAsDataURL(blob); });
@@ -47,12 +67,12 @@ window.PROOFMARK_HOSTED = true;
     if (opts.signal?.aborted) return fail("cancelled", "Cancelled");
     let r;
     try {
-      r = await fetch("/api/claude", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, images, tier: opts.modelTier || "default" }), signal: opts.signal });
+      r = await fetch("/api/claude", { method: "POST", headers: { "content-type": "application/json", ...H() }, body: JSON.stringify({ prompt, images, tier: opts.modelTier || "default" }), signal: opts.signal });
     } catch (e) {
       return fail(e && e.name === "AbortError" ? "cancelled" : "upstream_error", "Network error");
     }
     const body = await r.json().catch(() => ({}));
-    if (r.status === 401) { overlay("Your session ended. Enter the code again."); return fail("session_expired", "Sign in again"); }
+    if (r.status === 401) { if (LTI) return fail("session_expired", "Open Proofmark from Toddle again."); overlay("Your session ended. Enter the code again."); return fail("session_expired", "Sign in again"); }
     if (!r.ok) return fail(body.code || "upstream_error", body.message || "Request failed");
     if (opts.onText) try { opts.onText({ text: body.text, delta: body.text }); } catch {}
     return { text: body.text, truncated: !!body.truncated, modelTierApplied: opts.modelTier || "default" };
@@ -93,7 +113,7 @@ window.PROOFMARK_HOSTED = true;
   const db = { doc: docRef, collection: colRef };
 
   /* ---------- user, downloads ---------- */
-  const user = { id: async () => "local", me: async () => ({ id: "local", name: "" }), isOwner: () => true, canEdit: () => true, can: () => true, profiles: async () => ({}) };
+  const user = { id: async () => ltiUserId, me: async () => ({ id: ltiUserId, name: (ltiInfo && ltiInfo.name) || "" }), isOwner: () => true, canEdit: () => true, can: () => true, profiles: async () => ({}) };
   const downloads = { save: async ({ filename, data }) => {
     const blob = data instanceof Blob ? data : new Blob([data], { type: /\.csv$/i.test(filename) ? "text/csv" : /\.html?$/i.test(filename) ? "text/html" : "application/octet-stream" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click(); a.remove();

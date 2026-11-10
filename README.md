@@ -39,6 +39,39 @@ Open http://localhost:3000 and enter your access code.
 2. Set `ANTHROPIC_API_KEY` and `ACCESS_CODE` in the service's Variables.
 3. Generate a domain under Settings → Networking.
 
+## Toddle gradebook (LTI 1.3)
+
+Proofmark can run as an LTI 1.3 tool inside Toddle. Teachers open it from an assignment, skip the access code, match the names Claude read on each paper to the Toddle class list, and send scores (optionally with each student's feedback as a comment) into the Toddle gradebook.
+
+Server variables (from Toddle's **Toddle LTI Credentials** panel):
+
+| Variable | Toddle field |
+|---|---|
+| `LTI_ISSUER` | Issuer URL |
+| `LTI_CLIENT_ID` | Client ID |
+| `LTI_DEPLOYMENT_ID` | Deployment ID |
+| `LTI_AUTH_URL` | Login URL |
+| `LTI_JWKS_URL` | Keyset URL |
+| `LTI_TOKEN_URL` | Token URL |
+| `PUBLIC_URL` | This app's public address, e.g. `https://proofmark.example.app` |
+| `LTI_PRIVATE_KEY_B64` | Proofmark's own RSA signing key, base64 PKCS#8 PEM: `openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \| base64` |
+
+What to enter in Toddle's custom LTI app form (replace the host with your `PUBLIC_URL`):
+
+| Toddle field | Value |
+|---|---|
+| Initiate login URL | `PUBLIC_URL/lti/login` |
+| Launch/Redirect URL(s) | `PUBLIC_URL/lti/launch` |
+| Keyset URL | `PUBLIC_URL/.well-known/jwks.json` |
+| Target link URI | `PUBLIC_URL/lti/launch` |
+| Placement | Assignment |
+| Allow grade passback | On |
+| Allow roster access | On (needed to match names) |
+| Message type | Deep linking |
+| Privacy level | Public (names are needed to match papers to students) |
+
+`GET /lti/config` on the running server lists these URLs.
+
 ## How it's built
 
 `src/proofmark.html` is the app. It runs as-is as a claude.ai artifact, where it uses the viewer's own Claude account. For self-hosting, `npm run build` wraps it into `public/index.html` with `public/shim.js`, which provides the same calls through this server (`server.js`) and the browser's local storage.

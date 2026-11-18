@@ -119,6 +119,9 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .hist{position:relative;display:flex;align-items:flex-end;gap:4px;height:130px;padding-top:18px}.hist .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:0;gap:2px}.hist .col i{display:block;width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px}.hist .col span{font:500 11px var(--mono);color:var(--muted)}
 .hist-axis{display:flex;gap:4px}.hist-axis span{flex:1;text-align:center;font:500 11px var(--mono);color:var(--muted);min-width:0}
 .med{position:absolute;top:0;bottom:0;border-left:2px dashed var(--ink);pointer-events:none}.med em{position:absolute;top:-2px;left:4px;font:600 11px var(--mono);font-style:normal;white-space:nowrap;background:var(--panel);padding:0 3px}
+.chart{width:100%;height:auto;display:block}.chart text{fill:var(--muted);font:11px var(--mono)}.chart .grid{stroke:var(--line);stroke-width:1}.chart .ln,.spark .ln{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.chart .pt,.spark .pt{fill:var(--accent)}.spark{display:block}
+tr[data-act]{cursor:pointer}tr[data-act]:hover td,tr.sel td{background:var(--accent-soft)}
+.delta.up{color:var(--good)}.delta.down{color:var(--bad)}.delta{font:600 13px var(--mono)}
 .slist .rv{color:var(--good);font-weight:700}
 @media (max-width:760px){.split{grid-template-columns:1fr}.slist{max-height:none;flex-direction:row;overflow-x:auto}.slist button{flex:0 0 auto}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -144,7 +147,7 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 const PDF_WORKER="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 const ERR_TYPES=["conceptual","procedural","computational","sign","notation","incomplete","proof logic","misread","blank","none"];
 const ERR_LABEL={conceptual:"Concept gap",procedural:"Procedure",computational:"Arithmetic",sign:"Sign error",notation:"Notation",incomplete:"Incomplete","proof logic":"Proof logic",misread:"Misread question",blank:"Left blank",none:"—"};
-const TABS=[["grade","Scan & grade"],["insights","Class insights"],["students","Student feedback"],["key","Answer key"],["tools","Teacher tools"]];
+const TABS=[["grade","Scan & grade"],["insights","Class insights"],["students","Student feedback"],["trends","Trends"],["key","Answer key"],["tools","Teacher tools"]];
 const CCSS="Common Core State Standards (CCSS)";
 const PROFILE_DEFAULT={partial:true,carry:true,methods:"any",tone:"Supportive",hints:"Standard"};
 const TONES={Supportive:"warm and encouraging: lead with what the student did right and frame mistakes as next steps",Neutral:"matter-of-fact and balanced: no inflated praise and no harshness",Direct:"concise and plain: say exactly what was wrong and what to do, with minimal praise",Strict:"exacting and high-expectation: firm and respectful, never insulting, holding the student to full rigor"};
@@ -202,6 +205,7 @@ const DEMO={id:"__demo",demo:true,title:"Unit 3 Quiz: Polynomials & Proof",cours
   demoStudent("Hana S.",[3,2,2,2,4,4],{1:["notation","Wrote the quotient as x² − x − 6 + 0, then as x² − x − 6/(x − 1).","The quotient is x² − x − 6. The remainder over (x − 1) only appears when it isn't 0."],3:["incomplete","Listed zeros as 1 and 3; missed −2 when factoring (x − 3)(x + 2).","Set each factor to zero, including x + 2."]},
    {glow:"Both proofs are complete and logically airtight.",grow:"After factoring, set every factor equal to zero.",next_steps:["Recheck #4 and list all three zeros.","Write division results as quotient + remainder/divisor only when the remainder isn't 0."],hint:"(x − 1)(x − 3)(x + 2) = 0 gives three equations."},),
  ]};
+DEMO.date="2026-11-10";
 DEMO.students[1].items[2].confidence="low";
 DEMO.students.forEach(s=>{if(/Amara|Emily|Hana/.test(s.name))s.reviewed=true});
 DEMO.reteach=`## Misconceptions that matter most
@@ -229,6 +233,7 @@ const S={uid:null,db:null,sample:null,downloads:null,imgLimits:null,dbStatus:"lo
   pages:[],perStudent:1,detail:true,tier:"default",grading:null,
   pageMap:{}, saving:0, reteachBusy:false, keyBusy:false, stdBusy:false,
   copy:{score:true,items:false},
+  trends:{cls:null,sel:null,busy:false,loaded:false},
   toddle:{ctx:null,roster:null,busy:false,msg:"",withFeedback:true,results:null},
   gen:{kind:"worksheet",topic:"",course:"",count:8,difficulty:"Mixed, easy to hard",fromGaps:true,busy:false,result:null}};
 
@@ -255,7 +260,7 @@ function setSave(){const el=$("#savestate");if(!el)return;
   if(S.cur&&S.cur.demo){el.textContent="Example class (not saved)";return}
   if(!canSave()){el.textContent=S.dbStatus==="loading"?"Connecting…":"Saving is off in this view";return}
   el.textContent=S.saving?"Saving…":(window.PROOFMARK_HOSTED?"Saved in this browser only. Export to keep a copy":"Saved privately to your account")}
-function assessmentBody(a){const {id,students,demo,...rest}=a;return rest}
+function assessmentBody(a){const {id,students,demo,...rest}=a;for(const k of Object.keys(rest))if(k[0]==="_")delete rest[k];return rest}
 let keyTimer=null;
 function saveKeySoon(){if(!S.cur||S.cur.demo)return;S.cur.updatedAt=Date.now();clearTimeout(keyTimer);keyTimer=setTimeout(saveKey,700);renderPicker()}
 function saveKey(){if(!canSave()||!S.cur||S.cur.demo)return;const a=S.cur;queueWrite(()=>aRef(a.id).set(assessmentBody(a)))}
@@ -266,7 +271,7 @@ async function loadList(){
   if(!canSave()){S.dbStatus="off";setSave();return}
   const timer=setTimeout(()=>{if(S.dbStatus==="loading"){S.dbStatus="slow";render()}},10000);
   try{const snap=await S.db.collection("data/users/"+S.uid).get();
-    S.list=snap.docs.filter(d=>d.exists).map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})).sort((a,b)=>num(b.createdAt)-num(a.createdAt));
+    S.list=snap.docs.filter(d=>d.exists).map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data())),_loaded:false})).sort((a,b)=>num(b.createdAt)-num(a.createdAt));
     S.dbStatus="ok";
   }catch(e){console.warn(e);S.dbStatus="error"}
   clearTimeout(timer);
@@ -567,7 +572,7 @@ function render(){renderPicker();renderTabs();setSave();
   if(a.demo)h+=`<div class="note warn"><span class="pill ex">Example</span> This is a made-up class so you can see what Proofmark produces. Choose <b>New assessment</b> to grade your own.</div>`;
   if(S.dbStatus==="slow")h+=`<div class="note warn">Your saved assessments can't be reached yet. Grading still works; results will save when the connection returns.</div>`;
   if(S.dbStatus==="off"&&!a.demo)h+=`<div class="note warn">Saving isn't available in this view, so results last until you close the page. Export the gradebook before leaving.</div>`;
-  h+=({key:viewKey,grade:viewGrade,insights:viewInsights,students:viewStudents,tools:viewTools})[S.tab](a);
+  h+=({key:viewKey,grade:viewGrade,insights:viewInsights,students:viewStudents,trends:viewTrends,tools:viewTools})[S.tab](a);
   m.innerHTML=h;
 }
 function renderPicker(){const p=$("#picker");const opts=S.list.map(a=>`<option value="${esc(a.id)}">${esc(a.title)}${a.course?" · "+esc(a.course):""}</option>`).join("");
@@ -591,6 +596,7 @@ function viewKey(a){const ro=a.demo?"disabled":"";const pts=maxPts(a);
    <div class="grid2">
      <label class="f">Assessment title<input id="k-title" value="${esc(a.title)}" ${ro}></label>
      <label class="f">Course / class<input id="k-course" value="${esc(a.course)}" placeholder="e.g. Algebra 2, Period 3" ${ro}></label>
+     <label class="f">Date given<input id="k-date" type="date" value="${esc(a.date||(a.createdAt?new Date(a.createdAt).toISOString().slice(0,10):""))}" ${ro}></label>
      <label class="f">Feedback reading level<select id="k-level" ${ro}>${["Grades 6–8","Grades 9–10","Grades 11–12","College"].map(l=>`<option ${a.level===l?"selected":""}>${l}</option>`).join("")}</select></label>
    </div>
    ${a.demo?"":`${a.questions.length?"":`<div class="note">You don't need to enter a key. When you grade, Claude reads the questions from the first student's pages, solves them, and fills in this table with Common Core standards. You can check and edit it afterward.</div>`}
@@ -767,6 +773,116 @@ async function copyText(text,okMsg){
   document.body.appendChild(lb);const t=lb.querySelector("#cp-fallback");t.value=text;t.focus();t.select();
   lb.querySelector("#cp-close").onclick=()=>lb.remove();return false}
 
+
+/* ---------- trends over time ---------- */
+const asOf=a=>a.date?Date.parse(a.date+"T12:00:00"):num(a.createdAt);
+const dShort=ts=>new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric"});
+const className=a=>(a.course||"").trim()||"No class name";
+function nameKey(n){return String(n||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z ]+/g," ").split(/\s+/).filter(Boolean).sort().join(" ")}
+const csvCell=v=>{const t=String(v??"");return /[",\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t};
+let _dp=null;
+function demoPast(){if(_dp)return _dp;
+  const traj={"Amara O.":[.90,.92],"Ben T.":[.45,.55],"Chloé R.":[.99,.97],"Diego M.":[.35,.30],"Emily W.":[.85,.84],"Farah K.":[.78,.70],"Gus L.":[.70,.78],"Hana S.":[.80,.84]};
+  const defs=[
+    {i:0,title:"Unit 1 Quiz: Equations & Factoring",date:"2026-09-22",qs:[["1","Solving linear equations","HSA-REI.B.3","Solve linear equations in one variable",3],["2","Polynomial multiplication","HSA-APR.A.1","Add, subtract and multiply polynomials",3],["3","Factoring","HSA-SSE.A.2","Use the structure of an expression to factor it",2],["4","Direct proof","MP3","Construct viable arguments",4]]},
+    {i:1,title:"Unit 2 Quiz: Polynomial Operations",date:"2026-10-20",qs:[["1","Polynomial division","HSA-APR.D.6","Rewrite rational expressions by division",3],["2","Polynomial multiplication","HSA-APR.A.1","Add, subtract and multiply polynomials",3],["3","Factoring","HSA-SSE.A.2","Use the structure of an expression to factor it",2],["4","Direct proof","MP3","Construct viable arguments",4]]}];
+  _dp=defs.map(d=>{const questions=d.qs.map(([n,concept,standard,standardDesc,points])=>({n,prompt:"",concept,standard,standardDesc,points,answer:""}));
+    const students=DEMO.students.map(ds=>{const base=traj[ds.name][d.i];
+      const items=questions.map((q,k)=>{let f=base+[-.05,.04,0,0][k];if(q.standard==="MP3"&&/Farah|Diego/.test(ds.name))f*=.35;f=Math.max(0,Math.min(1,f));
+        const earned=Math.round(q.points*f*2)/2;
+        return {q:q.n,max:q.points,earned,status:earned===q.points?"correct":earned===0?"incorrect":"partial",error_type:earned===q.points?"none":"procedural",error_step:"",comment:"",confidence:"high",student_answer:"",deductions:[]}});
+      return {id:"demo-p"+d.i+"-"+ds.id,name:ds.name,items,feedback:{glow:"",grow:/Farah|Diego/.test(ds.name)?"Start proofs from the definition of odd and even.":"Check each line for sign errors.",next_steps:[],hint:""}}});
+    return {id:"__demo_p"+d.i,demo:true,title:d.title,course:DEMO.course,date:d.date,questions,students}});
+  return _dp}
+async function loadAllStudents(){const T=S.trends;if(!canSave()||T.loaded||T.busy)return;T.busy=true;render();
+  try{for(const m of S.list){if(m._loaded)continue;const snap=await aRef(m.id).collection("students").get();
+      m.students=snap.docs.filter(d=>d.exists).map(d=>({id:d.id,...JSON.parse(JSON.stringify(d.data()))})).sort((x,y)=>num(x.order)-num(y.order));m._loaded=true}
+    T.loaded=true}catch(e){console.warn(e);toast("Couldn't load every saved assessment. Try again.")}
+  T.busy=false;render()}
+function buildTrends(){
+  const src=S.cur&&S.cur.demo?[...demoPast(),DEMO]:S.list.filter(x=>x.students&&x.students.length);
+  const classes=[...new Set(src.map(className))];
+  let cls=S.trends.cls;if(!cls||!classes.includes(cls))cls=S.cur&&classes.includes(className(S.cur))?className(S.cur):classes[0];
+  const sets=src.filter(x=>className(x)===cls).map(x=>({a:x,ts:asOf(x),M:maxPts(x)})).sort((p,q)=>p.ts-q.ts);
+  const stds={},stu={};
+  sets.forEach((st,idx)=>{const a=st.a;
+    for(const q of a.questions){if(!q.standard)continue;const o=stds[q.standard]=stds[q.standard]||{code:q.standard,desc:"",cells:{}};if(!o.desc&&q.standardDesc)o.desc=q.standardDesc}
+    for(const s of a.students){const k=nameKey(s.name);if(!k)continue;
+      const u=stu[k]=stu[k]||{key:k,name:s.name,pts:[],std:{}};u.name=s.name;const tot=total(s);
+      u.pts.push({idx,pct:pct(tot,st.M),pts:tot,M:st.M,sid:s.id,aid:a.id,grow:(s.feedback&&s.feedback.grow)||""});
+      const per={};for(const q of a.questions){if(!q.standard)continue;const it=s.items.find(i=>i.q===q.n);if(!it)continue;const o=per[q.standard]=per[q.standard]||{e:0,m:0};o.e+=it.earned;o.m+=it.max}
+      for(const [code,o] of Object.entries(per)){if(!o.m)continue;(u.std[code]=u.std[code]||[]).push({idx,f:o.e/o.m});
+        const c=stds[code].cells[idx]=stds[code].cells[idx]||{e:0,m:0,n:0,mast:0};c.e+=o.e;c.m+=o.m;c.n++;if(o.e/o.m>=.8)c.mast++}}});
+  const classAvg=sets.map((st,idx)=>{const arr=Object.values(stu).map(u=>u.pts.find(p=>p.idx===idx)).filter(Boolean);return arr.length?Math.round(100*arr.reduce((x,p)=>x+p.pts,0)/arr.reduce((x,p)=>x+p.M,0)):null});
+  const keys=Object.keys(stu),dup=[];
+  for(let i=0;i<keys.length;i++)for(let j=i+1;j<keys.length;j++){const A=keys[i].split(" "),B=keys[j].split(" ");const [sm,lg]=A.length<=B.length?[A,B]:[B,A];if(sm.every(t=>lg.includes(t)))dup.push([stu[keys[i]].name,stu[keys[j]].name])}
+  return {cls,classes,sets,stds,stu,classAvg,dup}}
+function studentFlags(u){const f=[],p=u.pts;
+  if(p.length>=2){const d=p[p.length-1].pct-p[p.length-2].pct;if(d<=-10)f.push({t:"bad",l:"Down "+(-d)+" pts"});else if(d>=10)f.push({t:"good",l:"Up "+d+" pts"})}
+  for(const [code,arr] of Object.entries(u.std))if(arr.length>=2&&arr.slice(-2).every(x=>x.f<.6))f.push({t:"warn",l:"Gap: "+code});
+  return f}
+function lineChart(vals,labels){const W=640,H=190,L=40,R=18,T=14,B=26,n=vals.length,P=28;
+  const x=i=>n===1?L+(W-L-R)/2:L+P+i*(W-L-R-2*P)/(n-1),y=v=>T+(1-v/100)*(H-T-B);
+  const grid=[0,25,50,75,100].map(v=>`<line class="grid" x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`).join("");
+  const pts=vals.map((v,i)=>v==null?null:[x(i),y(v)]);
+  const path=pts.filter(Boolean).map((q,i)=>(i?"L":"M")+q[0].toFixed(1)+" "+q[1].toFixed(1)).join(" ");
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Class average for each assessment">${grid}<path class="ln" d="${path}"/>${pts.map((q,i)=>q?`<circle class="pt" cx="${q[0]}" cy="${q[1]}" r="4"><title>${esc(labels[i])}: ${vals[i]}%</title></circle><text x="${q[0]}" y="${q[1]-9}" text-anchor="middle">${vals[i]}%</text>`:"").join("")}${labels.map((l,i)=>`<text x="${x(i)}" y="${H-8}" text-anchor="middle">${esc(l)}</text>`).join("")}</svg>`}
+function spark(vals){const W=90,H=24,n=vals.length;if(!n)return "";const x=i=>n===1?W/2:2+i*(W-4)/(n-1),y=v=>2+(1-v/100)*(H-4);
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><polyline class="ln" points="${vals.map((v,i)=>x(i).toFixed(1)+","+y(v).toFixed(1)).join(" ")}"/><circle class="pt" cx="${x(n-1).toFixed(1)}" cy="${y(vals[n-1]).toFixed(1)}" r="2.5"/></svg>`}
+function deltaHtml(d){return d==null?"":`<span class="delta ${d>0?"up":d<0?"down":""}">${d>0?"+":d<0?"−":""}${Math.abs(d)}</span>`}
+function viewTrends(a){const T=S.trends;
+  if(!a.demo){
+    if(!canSave())return `<div class="panel empty stack"><h2>History isn't available in this view</h2><p class="muted">Trends need saved assessments. Open this page in claude.ai, signed in, to keep your results.</p></div>`;
+    if(!T.loaded){if(!T.busy)setTimeout(loadAllStudents,0);return `<div class="panel empty"><h2>Loading your saved assessments…</h2></div>`}}
+  const D=buildTrends();
+  if(!D.sets.length)return `<div class="panel empty stack"><h2>No history yet</h2><p class="muted">Grade an assessment and it's saved to your account automatically. Give assessments of the same class the same <b>Course / class</b> name on the Answer key tab so they line up here.</p><div><button class="btn primary" data-tab="grade">Scan student work</button></div></div>`;
+  const {sets,stds,stu,classAvg}=D;const n=sets.length;const labels=sets.map(s=>dShort(s.ts));
+  const last=classAvg[classAvg.length-1],prev=classAvg.length>1?classAvg[classAvg.length-2]:null;
+  const stdRows=Object.values(stds).map(o=>{const idxs=Object.keys(o.cells).map(Number);const li=Math.max(...idxs);const c=o.cells[li];return {o,f:c.m?c.e/c.m:0}}).sort((x,y)=>x.f-y.f);
+  const below=stdRows.filter(r=>r.f<.6).length;
+  const rows=Object.values(stu).map(u=>({u,flags:studentFlags(u),last:u.pts[u.pts.length-1],prev:u.pts[u.pts.length-2]}));
+  const urg=r=>r.flags.filter(f=>f.t==="bad"||f.t==="warn").length;
+  rows.sort((x,y)=>urg(y)-urg(x)||x.last.pct-y.last.pct);
+  const sel=T.sel&&stu[T.sel]?stu[T.sel]:null;
+  let h=`${a.demo?`<div class="note warn"><span class="pill ex">Example</span> This history is made up. Your own assessments save to your Claude account and build up here.</div>`:""}
+  ${D.classes.length>1?`<label class="f" style="max-width:320px">Class<select id="tr-class">${D.classes.map(c=>`<option ${c===D.cls?"selected":""}>${esc(c)}</option>`).join("")}</select></label>`:""}
+  ${n<2?`<div class="note">Only one assessment so far for ${esc(D.cls)}. Trends appear once there are two or more with the same <b>Course / class</b> name.</div>`:""}
+  <div class="tiles">
+   <div class="tile"><div class="k">Assessments</div><div class="v">${n}</div><div class="small muted">${esc(D.cls)}</div></div>
+   <div class="tile"><div class="k">Students tracked</div><div class="v">${rows.length}</div><div class="small muted">matched by name</div></div>
+   <div class="tile"><div class="k">Latest class average</div><div class="v">${last==null?"–":last+"%"}</div><div class="small muted">${prev!=null&&last!=null?deltaHtml(last-prev)+" vs previous":"first assessment"}</div></div>
+   <div class="tile"><div class="k">Standards under 60%</div><div class="v">${below}</div><div class="small muted">on the latest assessment of each</div></div>
+  </div>
+  <div class="panel stack"><div class="spread"><h2>Class average over time</h2><span class="small muted">${n} assessment${n===1?"":"s"}</span></div>${lineChart(classAvg,labels)}
+   <div class="tablebox"><table><thead><tr><th>Date</th><th>Assessment</th><th>Students</th><th>Average</th></tr></thead><tbody>${sets.map((st,i)=>`<tr><td class="mono">${dShort(st.ts)}</td><td>${esc(st.a.title)}</td><td class="num">${st.a.students.length}</td><td class="num">${classAvg[i]==null?"–":classAvg[i]+"%"}</td></tr>`).join("")}</tbody></table></div></div>
+  ${stdRows.length?`<div class="panel stack"><div class="spread"><h2>Standards over time</h2><span class="small muted">Class average on each standard. Lowest on the latest assessment first.</span></div>
+   <div class="tablebox"><table class="heat"><thead><tr><th class="name">Standard</th>${sets.map(st=>`<th title="${esc(st.a.title)}">${dShort(st.ts)}</th>`).join("")}</tr></thead><tbody>
+   ${stdRows.map(({o})=>`<tr><td class="name"><span class="mono">${esc(o.code)}</span> <span class="small muted">${esc(o.desc)}</span></td>${sets.map((_,i)=>{const c=o.cells[i];return c?`<td class="c" style="background:${heatColor(c.m?c.e/c.m:0)}" title="${c.mast} of ${c.n} students at 80%+">${pct(c.e,c.m)}%</td>`:`<td class="c">–</td>`}).join("")}</tr>`).join("")}
+   </tbody></table></div></div>`:""}
+  <div class="panel stack"><div class="spread"><h2>Students</h2><span class="small muted">Click a student for their full history. Flagged students first.</span></div>
+   <div class="tablebox"><table><thead><tr><th>Student</th><th>Trend</th><th>Latest</th><th>Change</th><th>Flags</th></tr></thead><tbody>
+   ${rows.map(r=>`<tr data-act="tsel" data-k="${esc(r.u.key)}" class="${sel&&sel.key===r.u.key?"sel":""}"><td>${esc(r.u.name)}</td><td>${spark(r.u.pts.map(p=>p.pct))}</td><td class="num">${r.last.pct}%</td><td>${r.prev?deltaHtml(r.last.pct-r.prev.pct):'<span class="muted small">first</span>'}</td><td>${r.flags.map(f=>`<span class="pill ${f.t}">${esc(f.l)}</span>`).join(" ")}</td></tr>`).join("")}
+   </tbody></table></div>
+   ${D.dup.length?`<div class="note warn">These names might be the same student: ${D.dup.map(d=>esc(d[0])+" and "+esc(d[1])).join("; ")}. If so, make the spelling match on the Student feedback tab so their history joins up.</div>`:""}
+  </div>`;
+  if(sel){h+=`<div class="panel stack"><div class="spread"><h2>${esc(sel.name)}</h2><span class="small muted">${sel.pts.length} assessment${sel.pts.length===1?"":"s"}</span></div>
+   ${spark(sel.pts.map(p=>p.pct)).replace('width="90" height="24"','width="180" height="48"')}
+   <div class="tablebox"><table><thead><tr><th>Date</th><th>Assessment</th><th>Score</th><th></th></tr></thead><tbody>${sel.pts.map(p=>{const st=sets[p.idx];return `<tr><td class="mono">${dShort(st.ts)}</td><td>${esc(st.a.title)}</td><td class="num">${fmt(p.pts)} / ${p.M} (${p.pct}%)</td><td>${a.demo?"":`<button class="btn sm" data-act="opentrend" data-aid="${esc(p.aid)}" data-sid="${esc(p.sid)}">Open</button>`}</td></tr>`}).join("")}</tbody></table></div>
+   ${Object.keys(sel.std).length?`<h3>By standard</h3><div class="tablebox"><table class="heat"><thead><tr><th class="name">Standard</th>${sets.map(st=>`<th title="${esc(st.a.title)}">${dShort(st.ts)}</th>`).join("")}</tr></thead><tbody>${Object.entries(sel.std).map(([code,arr])=>`<tr><td class="name"><span class="mono">${esc(code)}</span> <span class="small muted">${esc((stds[code]||{}).desc||"")}</span></td>${sets.map((_,i)=>{const c=arr.find(x=>x.idx===i);return c?`<td class="c" style="background:${heatColor(c.f)}">${Math.round(c.f*100)}%</td>`:`<td class="c">–</td>`}).join("")}</tr>`).join("")}</tbody></table></div>`:""}
+   ${sel.pts.some(p=>p.grow)?`<h3>Next focus, by assessment</h3>${sel.pts.filter(p=>p.grow).slice(-5).reverse().map(p=>`<div class="err"><b>${dShort(sets[p.idx].ts)}</b> ${esc(p.grow)}</div>`).join("")}`:""}
+  </div>`}
+  h+=`<div class="panel spread"><div><h3>Export</h3><span class="small muted">Spreadsheets of this class's history, or a full backup of everything saved to your account.</span></div><div class="row"><button class="btn" data-act="trcsv">Student scores CSV</button><button class="btn" data-act="stcsv">Standards CSV</button>${a.demo?"":`<button class="btn" data-act="backup">Download backup</button>`}</div></div>`;
+  return h}
+function trendsCsv(){const D=buildTrends();const rows=[["Class","Student","Assessment","Date","Points","Out of","Percent"]];
+  for(const u of Object.values(D.stu))for(const p of u.pts){const st=D.sets[p.idx];rows.push([D.cls,u.name,st.a.title,new Date(st.ts).toISOString().slice(0,10),p.pts,p.M,p.pct])}
+  save(safe(D.cls)+"-student-scores.csv",rows.map(r=>r.map(csvCell).join(",")).join("\n"))}
+function standardsCsv(){const D=buildTrends();const rows=[["Class","Standard","Description","Assessment","Date","Class percent","Students","Students at 80%+"]];
+  for(const o of Object.values(D.stds))for(const [i,c] of Object.entries(o.cells)){const st=D.sets[i];rows.push([D.cls,o.code,o.desc,st.a.title,new Date(st.ts).toISOString().slice(0,10),pct(c.e,c.m),c.n,c.mast])}
+  save(safe(D.cls)+"-standards.csv",rows.map(r=>r.map(csvCell).join(",")).join("\n"))}
+async function backupAll(){await loadAllStudents();
+  const data={app:"proofmark",version:1,exportedAt:new Date().toISOString(),assessments:S.list.map(m=>{const b={...assessmentBody(m),id:m.id,students:m.students||[]};for(const k of Object.keys(b))if(k[0]==="_")delete b[k];return b})};
+  save("proofmark-backup-"+new Date().toISOString().slice(0,10)+".json",JSON.stringify(data))}
+
 function viewStudents(a){
   if(!a.students.length)return `<div class="panel empty stack"><h2>No students graded yet</h2><div><button class="btn primary" data-tab="grade">Scan student work</button></div></div>`;
   const list=[...a.students].sort((x,y)=>x.name.localeCompare(y.name));if(!S.sel||!a.students.find(s=>s.id===S.sel))S.sel=list[0].id;
@@ -800,7 +916,7 @@ function viewStudents(a){
 /* ---------- events ---------- */
 document.addEventListener("click",e=>{
   const z=e.target.closest("[data-zoom]");if(z){const lb=document.createElement("div");lb.className="lightbox";lb.innerHTML=`<img src="${z.dataset.zoom}" alt="">`;lb.onclick=()=>lb.remove();document.body.appendChild(lb);return}
-  const t=e.target.closest("[data-tab]");if(t){S.tab=t.dataset.tab;S.confirmDel=false;render();window.scrollTo(0,0);return}
+  const t=e.target.closest("[data-tab]");if(t){S.tab=t.dataset.tab;S.confirmDel=false;render();window.scrollTo(0,0);if(S.tab==="trends"&&!(S.cur&&S.cur.demo))loadAllStudents();return}
   const b=e.target.closest("[data-act]");if(!b)return;const act=b.dataset.act;const a=S.cur;
   if(act!=="regrade")S.confirmRegrade=false;
   if(act!=="delA")S.confirmDel=false;if(act!=="delS")S.confirmDelS=null;
@@ -812,6 +928,11 @@ document.addEventListener("click",e=>{
     if(canSave())queueWrite(async()=>{for(const sid of sids)await aRef(id).collection("students").doc(sid).delete();await aRef(id).delete()});
     if(S.cur&&!S.cur.demo)openAssessment(S.cur.id);else{S.tab="insights";render()}toast("Assessment deleted")}
   else if(act==="gradeall")gradeAll();
+  else if(act==="tsel"){S.trends.sel=b.dataset.k;render()}
+  else if(act==="opentrend"){(async()=>{await openAssessment(b.dataset.aid);S.sel=b.dataset.sid;S.tab="students";render();window.scrollTo(0,0)})()}
+  else if(act==="trcsv")trendsCsv();
+  else if(act==="stcsv")standardsCsv();
+  else if(act==="backup")backupAll();
   else if(act==="profile"){S.profileOpen=!S.profileOpen;render()}
   else if(act==="regrade"){if(!S.confirmRegrade){S.confirmRegrade=true;renderProgress();return}S.confirmRegrade=false;for(const g of groups()){const st=S.pageMap[g.key];if(st&&st.status==="done")st.status="ready"}gradeAll()}
   else if(act==="review"){const s=a.students.find(x=>x.id===S.sel);if(s&&!a.demo){s.reviewed=!s.reviewed;saveStudentSoon(s);render()}}
@@ -850,6 +971,7 @@ document.addEventListener("input",e=>{const el=e.target;const a=S.cur;
   if(!a||a.demo)return;
   if(el.id==="k-title"){a.title=el.value;saveKeySoon()}
   else if(el.id==="k-course"){a.course=el.value;saveKeySoon()}
+  else if(el.id==="k-date"){a.date=el.value;saveKeySoon()}
   else if(el.id==="k-guidance"){a.guidance=el.value;saveKeySoon()}
   else if(el.dataset.qf){const q=a.questions[+el.closest("tr").dataset.qi];q[el.dataset.qf]=el.dataset.qf==="points"?num(el.value):el.value;saveKeySoon()}
   else if(el.id==="s-name"){const s=a.students.find(x=>x.id===S.sel);s.name=el.value;saveStudentSoon(s)}
@@ -860,6 +982,7 @@ document.addEventListener("input",e=>{const el=e.target;const a=S.cur;
 document.addEventListener("change",e=>{const el=e.target;const a=S.cur;
   if(el.id==="k-level"&&a&&!a.demo){a.level=el.value;saveKeySoon()}
   else if(el.id==="gen-diff"){S.gen.difficulty=el.value}
+  else if(el.id==="tr-class"){S.trends.cls=el.value;S.trends.sel=null;render()}
   else if(el.id==="gen-gaps"){S.gen.fromGaps=el.checked}
   else if(el.id==="td-fb"){S.toddle.withFeedback=el.checked}
   else if(el.id==="cp-score"){S.copy.score=el.checked}

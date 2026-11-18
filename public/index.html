@@ -113,6 +113,14 @@ th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .lightbox{position:fixed;inset:0;background:rgba(10,14,22,.85);display:flex;align-items:center;justify-content:center;z-index:50;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
 .lightbox img{max-height:100%;max-width:100%;background:#fff}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:6px;font-size:14px;z-index:60}
+.ded{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:13px}.ded b{font-family:var(--mono);font-weight:600;color:var(--bad);margin-right:6px}.ded .adj b{color:var(--warn)}
+.stk{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--line)}.stk i{display:block;height:100%}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.concept.lv{grid-template-columns:minmax(0,1fr) 150px 44px}
+.hist{position:relative;display:flex;align-items:flex-end;gap:4px;height:130px;padding-top:18px}.hist .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;min-width:0;gap:2px}.hist .col i{display:block;width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px}.hist .col span{font:500 11px var(--mono);color:var(--muted)}
+.hist-axis{display:flex;gap:4px}.hist-axis span{flex:1;text-align:center;font:500 11px var(--mono);color:var(--muted);min-width:0}
+.med{position:absolute;top:0;bottom:0;border-left:2px dashed var(--ink);pointer-events:none}.med em{position:absolute;top:-2px;left:4px;font:600 11px var(--mono);font-style:normal;white-space:nowrap;background:var(--panel);padding:0 3px}
+.slist .rv{color:var(--good);font-weight:700}
 @media (max-width:760px){.split{grid-template-columns:1fr}.slist{max-height:none;flex-direction:row;overflow-x:auto}.slist button{flex:0 0 auto}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -139,6 +147,26 @@ const ERR_TYPES=["conceptual","procedural","computational","sign","notation","in
 const ERR_LABEL={conceptual:"Concept gap",procedural:"Procedure",computational:"Arithmetic",sign:"Sign error",notation:"Notation",incomplete:"Incomplete","proof logic":"Proof logic",misread:"Misread question",blank:"Left blank",none:"—"};
 const TABS=[["grade","Scan & grade"],["insights","Class insights"],["students","Student feedback"],["key","Answer key"],["tools","Teacher tools"]];
 const CCSS="Common Core State Standards (CCSS)";
+const PROFILE_DEFAULT={partial:true,carry:true,methods:"any",tone:"Supportive",hints:"Standard"};
+const TONES={Supportive:"warm and encouraging: lead with what the student did right and frame mistakes as next steps",Neutral:"matter-of-fact and balanced: no inflated praise and no harshness",Direct:"concise and plain: say exactly what was wrong and what to do, with minimal praise",Strict:"exacting and high-expectation: firm and respectful, never insulting, holding the student to full rigor"};
+const HINTS={Light:'a one-line nudge pointing to where to look, without giving the move',Standard:"the next correct move for their biggest error, without doing the whole problem",Detailed:"the next two correct moves for their biggest error, plus a short worked example of a similar problem (never the student's own problem)"};
+function getProfile(a){return {...PROFILE_DEFAULT,...((a&&a.profile)||{})}}
+function profileRules(a){const p=getProfile(a);const L=[];
+  L.push(p.partial?(p.carry?"PARTIAL CREDIT ON, WITH FOLLOW-THROUGH: if the student makes an early mistake and every later step is correct for the value they got, deduct only for the early mistake and give credit for the later steps.":"PARTIAL CREDIT ON, NO FOLLOW-THROUGH: award credit for correct steps, but deduct for every step that an earlier error affected."):"NO PARTIAL CREDIT: award full points or zero for each question, unless the rubric splits it into separately scored parts.");
+  L.push(p.methods==="any"?"SOLUTION METHODS: accept any mathematically valid method, even one that is not in the key. Judge the method on its own correctness.":"SOLUTION METHODS: credit only the method shown in the key; a different valid method earns reduced credit as the rubric and guidance say.");
+  return L.join("\n")}
+function cleanDeductions(raw,lost,fallback){
+  lost=Math.round(lost*2)/2;if(lost<=0)return [];
+  let d=(Array.isArray(raw)?raw:[]).map(x=>({points:Math.round(num(x&&x.points)*2)/2,reason:String((x&&x.reason)||"").trim()})).filter(x=>x.points>0&&x.reason);
+  let sum=d.reduce((a,b)=>a+b.points,0);
+  if(!d.length)return [{points:lost,reason:String(fallback||"Points lost").slice(0,300)}];
+  if(sum<lost)d.push({points:Math.round((lost-sum)*2)/2,reason:"Other points lost"});
+  while(sum>lost&&d.length){const last=d[d.length-1];const cut=Math.min(last.points,Math.round((sum-lost)*2)/2);last.points=Math.round((last.points-cut)*2)/2;sum=Math.round((sum-cut)*2)/2;if(last.points<=0)d.pop()}
+  return d}
+function dedRows(i){const lost=Math.round((i.max-i.earned)*2)/2;const d=(i.deductions||[]).filter(x=>x&&num(x.points)>0);
+  if(!d.length)return lost>0?[{points:lost,reason:i.error_step||i.comment||"Points lost"}]:[];
+  const sum=d.reduce((x,y)=>x+num(y.points),0);const diff=Math.round((lost-sum)*2)/2;
+  return diff===0?d:[...d,{points:diff,reason:"Adjusted by you",adj:true}]}
 
 /* ---------- example class (in-page, read-only) ---------- */
 const DEMO_Q=[
@@ -150,9 +178,9 @@ const DEMO_Q=[
  {n:"6",prompt:"Prove: if n² is even, then n is even.",concept:"Proof by contrapositive",standard:"MP3",points:4,answer:"State contrapositive: if n odd then n² odd (1). n=2k+1 (1). n²=4k²+4k+1=2(2k²+2k)+1 (1). Conclude (1)."}
 ];
 function demoStudent(name,pts,errs,fb){
-  const items=DEMO_Q.map((q,i)=>{const e=errs[i]||null;const earned=pts[i];
+  const items=DEMO_Q.map((q,i)=>{const e=errs[i]||null;const earned=pts[i];const lost=Math.round((q.points-earned)*2)/2;
     return {q:q.n,max:q.points,earned,status:earned===q.points?"correct":earned===0?(e&&e[0]==="blank"?"blank":"incorrect"):"partial",
-      error_type:e?e[0]:"none",error_step:e?e[1]:"",comment:e?e[2]:"Clean, complete work.",confidence:e&&e[3]?"low":"high",student_answer:""};});
+      error_type:e?e[0]:"none",error_step:e?e[1]:"",comment:e?e[2]:"Clean, complete work.",confidence:e&&e[3]?"low":"high",student_answer:"",deductions:lost>0?(e&&e[4]?e[4]:[{points:lost,reason:e?e[1]:"Points lost"}]):[]};});
   return {id:"demo-"+name.toLowerCase().replace(/\W/g,""),name,items,feedback:fb,gradedAt:Date.now()};
 }
 const DEMO={id:"__demo",demo:true,title:"Unit 3 Quiz: Polynomials & Proof",course:"Algebra 2",level:"Grades 9–10",framework:"CCSS (Common Core)",
@@ -164,7 +192,7 @@ const DEMO={id:"__demo",demo:true,title:"Unit 3 Quiz: Polynomials & Proof",cours
    {glow:"Your division and your use of #2 to find the zeros in #4 were well organized.",grow:"A proof has to work for every case, so it must start from general variables, not examples.",next_steps:["Redo #5 starting with 'Let a = 2m + 1 and b = 2n + 1'.","For #6, write the contrapositive in words before you begin.","Factor x² − 9, x² − 25 and 4x² − 1 for practice."],hint:"For #5: a + b = (2m + 1) + (2n + 1). What can you factor out?"}),
   demoStudent("Chloé R.",[3,1.5,2,1.5,4,4],{1:["computational","Synthetic division row 2: −1 + (−1)·1 written as 0 instead of −2; quotient became x² − x − 5.","Your setup was right. Recheck the second column of the synthetic division."],3:["computational","Carried the wrong quotient from #2 into #4, so the quadratic did not factor.","Your method was right, but the error from #2 carried over. Check that the remainder is 0 before moving on."]},
    {glow:"Both proofs are complete and clearly justified, which is the hardest part of this quiz.",grow:"Check your synthetic division before using the result elsewhere.",next_steps:["Redo the division in #2 and check by multiplying (x − 1)(quotient).","Find the zeros again with the corrected quotient."],hint:"A remainder of 0 tells you x = 1 is a root. If you don't get 0, recheck a column."}),
-  demoStudent("Diego M.",[1,1.5,1,1,1,0],{0:["sign","Line 2: (−3)(4x) written as +12x; then −14x became +10x.","Watch the sign when multiplying by −3."],1:["procedural","Long division: subtracted x³ − x² as x³ + x², which put an error in every later line.","When you subtract, change the sign of every term you are subtracting."],2:["conceptual","Factored as 2x(x − 4); treated x² − 4 like x − 4.","x³ ÷ x is x², so the GCF leaves 2x(x² − 4). Then keep factoring."],3:["incomplete","Found x = 1 only; did not use the quotient to find the other zeros.","Once you have one root, factor the quotient to find the other two."],4:["proof logic","Defined both odd numbers as 2n + 1 with the same n.","Using the same n makes both numbers equal. Use different letters."],5:["blank","No work shown.","Start by writing the contrapositive. That is the first point."]},
+  demoStudent("Diego M.",[1,1.5,1,1,1,0],{0:["sign","Line 2: (−3)(4x) written as +12x; then −14x became +10x.","Watch the sign when multiplying by −3.",false,[{points:1,reason:"(−3)(4x) written as +12x"},{points:1,reason:"Like terms combined to +10x instead of −14x"}]],1:["procedural","Long division: subtracted x³ − x² as x³ + x², which put an error in every later line.","When you subtract, change the sign of every term you are subtracting."],2:["conceptual","Factored as 2x(x − 4); treated x² − 4 like x − 4.","x³ ÷ x is x², so the GCF leaves 2x(x² − 4). Then keep factoring."],3:["incomplete","Found x = 1 only; did not use the quotient to find the other zeros.","Once you have one root, factor the quotient to find the other two."],4:["proof logic","Defined both odd numbers as 2n + 1 with the same n.","Using the same n makes both numbers equal. Use different letters."],5:["blank","No work shown.","Start by writing the contrapositive. That is the first point."]},
    {glow:"You set up each problem and attempted the proof in #5, which takes courage.",grow:"Most lost points come from subtracting negatives during division and distribution.",next_steps:["Rework #1 and #2, circling every negative sign before you multiply or subtract.","Use two different letters for two different odd numbers in #5.","Write the contrapositive of #6 as your first line."],hint:"In long division, write the subtraction as adding the opposite: −(x³ − x²) = −x³ + x²."}),
   demoStudent("Emily W.",[3,3,2,3,3,2],{4:["proof logic","Concluded '2(m + n + 1) so even' without saying m + n + 1 is an integer.","State that m + n + 1 is an integer. That is what makes it even."],5:["proof logic","Proved the contrapositive correctly but never stated why it proves the original.","Add a sentence: the contrapositive is logically equivalent, so the original is true."]},
    {glow:"Every algebra problem is fully correct and your work is easy to follow.",grow:"In proofs, say every reason out loud, even the ones that feel obvious.",next_steps:["Add the missing justification sentence to #5 and #6.","Read a classmate's proof and mark each step with its reason."],hint:"Ask yourself after each line: 'What rule or definition lets me write this?'"}),
@@ -176,6 +204,7 @@ const DEMO={id:"__demo",demo:true,title:"Unit 3 Quiz: Polynomials & Proof",cours
    {glow:"Both proofs are complete and logically airtight.",grow:"After factoring, set every factor equal to zero.",next_steps:["Recheck #4 and list all three zeros.","Write division results as quotient + remainder/divisor only when the remainder isn't 0."],hint:"(x − 1)(x − 3)(x + 2) = 0 gives three equations."},),
  ]};
 DEMO.students[1].items[2].confidence="low";
+DEMO.students.forEach(s=>{if(/Amara|Emily|Hana/.test(s.name))s.reviewed=true});
 DEMO.reteach=`## Misconceptions that matter most
 - **An example is treated as a proof** (Ben, Diego; Farah left both proofs blank). Students check a case instead of starting from definitions.
 - **Partial distribution with a negative factor** (Ben, Gus, Diego). The last term of the trinomial is skipped or its sign flips.
@@ -267,6 +296,7 @@ function newAssessment(){
 /* ---------- Claude calls ---------- */
 function keyText(a){return a.questions.map(q=>`Q${q.n} [${num(q.points)} pts] Concept: ${q.concept||"(unspecified)"}${q.standard?" | Standard: "+q.standard:""}\n  Question: ${q.prompt||"(see page)"}\n  Correct answer / what earns credit: ${q.answer||"(not given; solve it yourself)"}`).join("\n")}
 function gradePrompt(a,split,pageCount){
+  const p=getProfile(a);
   return `You are grading ONE student's handwritten math assessment for their teacher. The attached images are this student's ${pageCount} page(s), in order.${split?" Each page is sent as two overlapping crops (top part, then bottom part) so handwriting is legible; treat the overlap as the same work, not repeated work.":""}
 
 ASSESSMENT: ${a.title}${a.course?" ("+a.course+")":""}
@@ -275,27 +305,31 @@ ${keyText(a)}
 
 TEACHER'S GRADING GUIDANCE: ${a.guidance||"Use standard partial credit."}
 
+GRADING PROFILE (set by the teacher; follow it)
+${profileRules(a)}
+
 HOW TO GRADE
 - Read all handwritten work for each question, including scratch work and crossed-out lines. Grade both the final answer and the reasoning.
-- Award partial credit in steps of 0.5, never above the question's points. Follow the rubric and guidance.
+- Award points in steps of 0.5, never above the question's points. Follow the rubric, guidance and grading profile.
+- Itemize every point lost as a deduction with a specific reason the student can follow, quoting their work where helpful. The deduction amounts must add up to exactly the points lost on that question.
 - For every point lost, find the FIRST step where the work goes wrong and describe it precisely, quoting what the student wrote (e.g. "Line 2: distributed −3 to x² and 4x but not to −1").
 - For proofs, check every inference: name a missing justification, an unjustified leap, an example used as proof, circular reasoning, or a proved converse.
 - Never invent work that isn't on the page. If handwriting is hard to read, give your best reading and set confidence "low". If nothing is written for a question, status "blank".
 - error_type must be one of: ${ERR_TYPES.map(t=>'"'+t+'"').join(", ")} ("none" when full credit).
 - Read the student's name from the page if written; otherwise "".
 
-FEEDBACK TO THE STUDENT (${a.level||"high school"} reading level): warm, specific, second person, about the math, never about the score. "glow" names something they really did well. "grow" names the ONE most important thing to work on. "next_steps" are 2–3 concrete actions or practice problems. "hint" shows the next correct move for their biggest error without doing the whole problem. Each item "comment" is one or two sentences to the student.
+FEEDBACK TO THE STUDENT (${a.level||"high school"} reading level): tone: ${TONES[p.tone]||TONES.Supportive}. Always specific, in second person, about the math and never about the score. "glow" names something they really did well. "grow" names the ONE most important thing to work on. "next_steps" are 2–3 concrete actions or practice problems. "hint" is ${HINTS[p.hints]||HINTS.Standard}. Each item "comment" is one or two sentences to the student.
 
 Reply with ONLY this JSON:
-{"student_name":"","items":[{"q":"1","earned":0,"status":"correct|partial|incorrect|blank","student_answer":"short transcription of their final answer","error_type":"none","error_step":"teacher-facing: exact step where it went wrong, or empty","comment":"","confidence":"high|medium|low"}],"feedback":{"glow":"","grow":"","next_steps":[""],"hint":""}}
+{"student_name":"","items":[{"q":"1","earned":0,"status":"correct|partial|incorrect|blank","student_answer":"short transcription of their final answer","error_type":"none","error_step":"teacher-facing: exact step where it went wrong, or empty","deductions":[{"points":1.5,"reason":"what cost these points, in words the student can follow"}],"comment":"","confidence":"high|medium|low"}],"feedback":{"glow":"","grow":"","next_steps":[""],"hint":""}}
 Include exactly one item for each question: ${a.questions.map(q=>q.n).join(", ")}.`;
 }
 function normalizeResult(a,r,fallbackName){
   const items=a.questions.map(q=>{const it=(r&&Array.isArray(r.items)?r.items:[]).find(x=>String(x.q).replace(/^Q/i,"")===String(q.n))||{};
     const max=num(q.points);let earned=Math.max(0,Math.min(max,Math.round(num(it.earned)*2)/2));
-    const et=ERR_TYPES.includes(it.error_type)?it.error_type:(earned===max?"none":"procedural");
+    const et=ERR_TYPES.includes(it.error_type)?it.error_type:(earned===max?"none":"procedural");const ded=cleanDeductions(it.deductions,max-earned,it.error_step||it.comment);
     return {q:q.n,max,earned,status:["correct","partial","incorrect","blank"].includes(it.status)?it.status:(earned===max?"correct":earned>0?"partial":"incorrect"),
-      student_answer:String(it.student_answer||""),error_type:et,error_step:String(it.error_step||""),comment:String(it.comment||""),confidence:["high","medium","low"].includes(it.confidence)?it.confidence:"medium"}});
+      student_answer:String(it.student_answer||""),deductions:ded,error_type:et,error_step:String(it.error_step||""),comment:String(it.comment||""),confidence:["high","medium","low"].includes(it.confidence)?it.confidence:"medium"}});
   const f=(r&&r.feedback)||{};
   return {name:String((r&&r.student_name)||"").trim()||fallbackName,items,
     feedback:{glow:String(f.glow||""),grow:String(f.grow||""),next_steps:Array.isArray(f.next_steps)?f.next_steps.map(String).filter(Boolean):[],hint:String(f.hint||"")}};
@@ -513,8 +547,8 @@ async function save(filename,data){if(!S.downloads){toast("Downloads aren't avai
   try{await S.downloads.save({filename,data});toast("Saved "+filename)}catch(e){if(e&&e.code!=="declined")toast("Couldn't save the file.")}}
 const safe=s=>String(s).replace(/[^\w\- ]+/g,"").trim().replace(/\s+/g,"-")||"assessment";
 function exportCsv(){const a=S.cur;const q=a.questions;const c=v=>{const s=String(v??"");return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s};
-  const rows=[["Student",...q.map(x=>"Q"+x.n+" ("+x.points+")"),"Total","Out of","Percent","Needs review"]];
-  for(const s of a.students){const t=total(s);rows.push([s.name,...q.map(x=>{const i=s.items.find(i=>i.q===x.n);return i?i.earned:""}),t,maxPts(a),pct(t,maxPts(a)),flagged(s)?"yes":""])}
+  const rows=[["Student",...q.map(x=>"Q"+x.n+" ("+x.points+")"),"Total","Out of","Percent","Needs review","Reviewed"]];
+  for(const s of a.students){const t=total(s);rows.push([s.name,...q.map(x=>{const i=s.items.find(i=>i.q===x.n);return i?i.earned:""}),t,maxPts(a),pct(t,maxPts(a)),flagged(s)?"yes":"",s.reviewed?"yes":""])}
   save(safe(a.title)+"-grades.csv",rows.map(r=>r.map(c).join(",")).join("\n"))}
 function exportFeedback(withScore){const a=S.cur;
   const body=a.students.map(s=>{const t=total(s);return `<section><h1>${esc(s.name)}</h1><p class="meta">${esc(a.title)}${withScore?` · <b>${fmt(t)} / ${maxPts(a)}</b>`:""}</p>
@@ -541,6 +575,17 @@ function renderPicker(){const p=$("#picker");const opts=S.list.map(a=>`<option v
   p.innerHTML=opts+`<option value="__demo">Example class: ${esc(DEMO.title)}</option>`;p.value=S.cur?S.cur.id:"__demo"}
 function renderTabs(){$("#tabs").innerHTML=TABS.map(([k,l],i)=>`<button role="tab" aria-selected="${S.tab===k}" data-tab="${k}">${i<3?`<span class="n">${i+1}</span>`:""}${l}${k==="students"&&S.cur?` <span class="pill">${S.cur.students.length}</span>`:""}</button>`).join("")}
 
+function profilePanel(a,nested){const p=getProfile(a);const ro=a.demo?"disabled":"";
+  const chips=`<div class="chips row"><span class="pill">Tone: ${esc(p.tone)}</span><span class="pill ${p.partial?"good":"warn"}">Partial credit: ${p.partial?(p.carry?"On, with follow-through":"On"):"Off"}</span><span class="pill">Methods: ${p.methods==="any"?"Any valid":"Key only"}</span><span class="pill">Hints: ${esc(p.hints)}</span></div>`;
+  const form=S.profileOpen&&!a.demo?`<div class="grid2">
+    <label class="row" style="gap:8px"><input type="checkbox" id="pf-partial" style="width:auto" ${p.partial?"checked":""}> Give partial credit</label>
+    <label class="row" style="gap:8px"><input type="checkbox" id="pf-carry" style="width:auto" ${p.carry?"checked":""} ${p.partial?"":"disabled"}> Credit later correct work after an early mistake</label>
+    <label class="f">Solution methods<select id="pf-methods"><option value="any" ${p.methods==="any"?"selected":""}>Accept any valid method</option><option value="key" ${p.methods==="key"?"selected":""}>Only the method in my key</option></select></label>
+    <label class="f">Feedback tone<select id="pf-tone">${Object.keys(TONES).map(t=>`<option ${p.tone===t?"selected":""}>${t}</option>`).join("")}</select></label>
+    <label class="f">Hint strength<select id="pf-hints">${Object.keys(HINTS).map(t=>`<option ${p.hints===t?"selected":""}>${t}</option>`).join("")}</select></label>
+  </div><div class="small muted">Applies the next time papers are graded. To apply it to papers already graded, use Regrade all on the Scan & grade tab.</div>`:"";
+  const inner=`<div class="spread"><h3>Grading profile</h3>${a.demo?"":`<button class="btn sm" data-act="profile">${S.profileOpen?"Done":"Change"}</button>`}</div>${chips}${form}`;
+  return nested?`<div class="stack">${inner}</div>`:`<div class="panel stack">${inner}</div>`}
 function viewKey(a){const ro=a.demo?"disabled":"";const pts=maxPts(a);
   return `<div class="panel stack">
    <div class="spread"><h2>Answer key & rubric</h2><span class="muted small">${a.questions.length} questions · <span class="num">${fmt(pts)}</span> points${a.keyAuto?" · built by Claude":""}</span></div>
@@ -552,6 +597,7 @@ function viewKey(a){const ro=a.demo?"disabled":"";const pts=maxPts(a);
    ${a.demo?"":`${a.questions.length?"":`<div class="note">You don't need to enter a key. When you grade, Claude reads the questions from the first student's pages, solves them, and fills in this table with Common Core standards. You can check and edit it afterward.</div>`}
    ${S.pages.length?`<div class="row"><button class="btn" data-act="rebuildkey" ${S.keyBusy||!S.sample?"disabled":""}>${S.keyBusy?"Building key…":a.questions.length?"Rebuild key from scans":"Build key from scans now"}</button><span class="small muted">Uses the first student's pages.</span></div>`:""}
    ${a.questions.length?`<div class="row"><button class="btn" data-act="mapstd" ${S.stdBusy||!S.sample?"disabled":""}>${S.stdBusy?"Mapping…":"Re-map to Common Core"}</button><span class="small muted">Codes are filled in automatically. Hover a code for its description.</span></div>`:""}`}
+   ${profilePanel(a,true)}
    <div class="tablebox"><table class="keytable"><thead><tr><th>#</th><th>Question</th><th>Concept / skill</th><th>Standard</th><th>Pts</th><th>Correct answer & what earns credit</th><th></th></tr></thead><tbody>
    ${a.questions.map((q,i)=>`<tr data-qi="${i}"><td><input data-qf="n" value="${esc(q.n)}" ${ro}></td><td><textarea data-qf="prompt" rows="2" ${ro}>${esc(q.prompt)}</textarea></td><td><input data-qf="concept" value="${esc(q.concept)}" placeholder="e.g. Synthetic division" ${ro}></td><td><input data-qf="standard" value="${esc(q.standard||"")}" placeholder="e.g. HSA-APR.D.6" class="mono" title="${esc(q.standardDesc||"")}" ${ro}></td><td><input data-qf="points" type="number" min="0" step="0.5" value="${esc(q.points)}" class="num" ${ro}></td><td><textarea data-qf="answer" rows="2" ${ro}>${esc(q.answer)}</textarea></td><td>${a.demo?"":`<button class="btn sm danger" data-act="delq" data-i="${i}" aria-label="Remove question ${esc(q.n)}">✕</button>`}</td></tr>`).join("")}
    </tbody></table></div>
@@ -566,6 +612,7 @@ function viewGrade(a){
   const noSample=!S.sample?`<div class="note bad">Claude isn't available in this view, so grading is off. Open this page in claude.ai while signed in.</div>`:(S.imgLimits===null?"":(!S.imgLimits.maxCount?`<div class="note bad">This view can't send images to Claude.</div>`:""));
   return `${noSample}
   ${ready?"":`<div class="note warn">Some questions on the Answer key tab have 0 points. Give each a point value before grading.</div>`}
+  ${profilePanel(a,false)}
   <div class="panel stack">
    <div class="spread"><h2>Student work</h2><span class="small muted">${S.pages.length} page(s) → ${gs.length} student(s)</span></div>
    <label class="drop" id="drop" for="workfiles"><b>Drop scans or photos here</b><br><span class="muted small">JPG, PNG or a scanned class-set PDF. Pages are grouped in order.</span></label>
@@ -591,7 +638,7 @@ function renderProgress(){const el=$("#progress");if(!el||!S.cur)return;const r=
   let h="";
   if(r&&r.fatal)h+=`<div class="note bad">${esc(r.fatal)}</div>`;
   if(r&&r.end)h+=`<div class="small muted">Last run: ${r.done-r.errors} graded${r.errors?`, ${r.errors} failed`:""} in <span class="num">${mins(r.end-r.start)}</span>.</div>`;
-  h+=`<div class="row"><button class="btn primary" data-act="gradeall" ${canGo&&pending?"":"disabled"}>${pending?`Grade ${pending} student${pending>1?"s":""}`:gs.length?"All pages graded":"Add student pages to grade"}</button>${pending>1?`<span class="small muted">Two at a time. About ${Math.ceil(pending*45/2/60)+(nokey?1:0)} min.</span>`:""}${nokey&&pending?`<div class="small muted" style="flex-basis:100%">No answer key needed. Claude reads the questions from the first student's pages, solves them, and tags each with its Common Core standard.</div>`:""}</div>`;
+  h+=`<div class="row"><button class="btn primary" data-act="gradeall" ${canGo&&pending?"":"disabled"}>${pending?`Grade ${pending} student${pending>1?"s":""}`:gs.length?"All pages graded":"Add student pages to grade"}</button>${pending>1?`<span class="small muted">Two at a time. About ${Math.ceil(pending*45/2/60)+(nokey?1:0)} min.</span>`:""}${nokey&&pending?`<div class="small muted" style="flex-basis:100%">No answer key needed. Claude reads the questions from the first student's pages, solves them, and tags each with its Common Core standard.</div>`:""}${gs.some(g=>S.pageMap[g.key]&&S.pageMap[g.key].status==="done")?`<button class="btn" data-act="regrade">${S.confirmRegrade?"Click again: this replaces your edits":"Regrade all"}</button>`:""}</div>`;
   el.innerHTML=h}
 function renderGroups(){const el=$("#groups");if(!el||!S.cur)return;
   el.innerHTML=groups().map(g=>{const st=S.pageMap[g.key]||{};const s=st.sid&&S.cur.students.find(x=>x.id===st.sid);
@@ -608,6 +655,11 @@ function classStats(a){
   const types={};for(const s of a.students)for(const i of s.items)if(i.earned<i.max){types[i.error_type]=(types[i.error_type]||0)+1}
   return {qs,concepts,types,stds};
 }
+function levelCounts(a,qnums){const c={m:0,a:0,b:0,n:0,who:[]};
+  for(const s of a.students){const its=s.items.filter(i=>qnums.includes(i.q));const m=its.reduce((x,i)=>x+i.max,0);if(!m)continue;const f=its.reduce((x,i)=>x+i.earned,0)/m;c.n++;
+    if(f>=.8)c.m++;else{if(f>=.6)c.a++;else c.b++;c.who.push(s.name.split(" ")[0])}}return c}
+function stackBar(c){const w=k=>c.n?(100*c[k]/c.n):0;return `<div class="stk" role="img" aria-label="${c.m} mastered, ${c.a} approaching, ${c.b} beginning"><i style="width:${w("m")}%;background:var(--good)"></i><i style="width:${w("a")}%;background:var(--warn)"></i><i style="width:${w("b")}%;background:var(--bad)"></i></div>`}
+const LEGEND='<div class="legend"><span><i style="background:var(--good)"></i>Mastered (80%+)</span><span><i style="background:var(--warn)"></i>Approaching (60–79%)</span><span><i style="background:var(--bad)"></i>Beginning (under 60%)</span></div>';
 function viewInsights(a){
   if(!a.students.length)return `<div class="panel empty stack"><h2>No graded work yet</h2><p class="muted">Insights appear once students are graded.</p><div><button class="btn primary" data-tab="grade">Scan student work</button></div></div>`;
   const M=maxPts(a);const totals=a.students.map(total);const avg=totals.reduce((x,y)=>x+y,0)/totals.length;const sorted=[...totals].sort((x,y)=>x-y);const med=sorted[Math.floor((sorted.length-1)/2)];
@@ -617,8 +669,13 @@ function viewInsights(a){
     <div class="tile"><div class="k">Class average</div><div class="v">${pct(avg,M)}%</div><div class="small muted num">${fmt(Math.round(avg*10)/10)} / ${M} pts</div></div>
     <div class="tile"><div class="k">Median</div><div class="v">${pct(med,M)}%</div><div class="small muted">${a.students.length} students</div></div>
     <div class="tile"><div class="k">Hardest question</div><div class="v">Q${esc(weak[0]?weak[0].q.n:"—")}</div><div class="small muted">${weak[0]?pct(weak[0].f,1)+"% of points earned":"Everyone scored full marks"}</div></div>
+    <div class="tile"><div class="k">Reviewed</div><div class="v">${a.students.filter(x=>x.reviewed).length}/${a.students.length}</div><div class="small muted">papers you've checked</div></div>
     <div class="tile"><div class="k">Needs your eyes</div><div class="v">${a.students.filter(flagged).length}</div><div class="small muted">students with hard-to-read work</div></div>
   </div>
+  ${(()=>{const bins=Array(10).fill(0);for(const v of totals){bins[Math.min(9,Math.floor(pct(v,M)/10))]++}const mx=Math.max(...bins,1);const mp=pct(med,M);
+    return `<div class="panel stack"><div class="spread"><h2>Score distribution</h2><span class="small muted">Students per 10% band. Dashed line is the median (${mp}%).</span></div>
+    <div><div class="hist">${bins.map((n,k)=>`<div class="col" title="${k*10}–${k===9?100:k*10+9}%: ${n} student${n===1?"":"s"}"><span>${n||""}</span><i style="height:${Math.round(n/mx*90)}px;${n?"":"opacity:.25"}"></i></div>`).join("")}<div class="med" style="left:${Math.min(99,mp)}%"><em>median</em></div></div>
+    <div class="hist-axis">${bins.map((_,k)=>`<span>${k*10}</span>`).join("")}</div></div></div>`})()}
   <div class="panel stack"><div class="spread"><h2>Where students struggle</h2><span class="small muted">Lowest-scoring questions, with the step where work went wrong</span></div>
    ${weak.map(x=>{const errs=a.students.map(s=>({s,i:s.items.find(i=>i.q===x.q.n)})).filter(o=>o.i&&o.i.earned<o.i.max);
      return `<div class="stack" style="gap:6px"><div class="spread"><h3>Q${esc(x.q.n)} · ${esc(x.q.concept||x.q.prompt)}</h3><span class="pill ${x.f<.6?"bad":x.f<.8?"warn":"good"}">${pct(x.f,1)}% earned</span></div>
@@ -627,17 +684,16 @@ function viewInsights(a){
      ${errs.length>5?`<div class="small muted">+ ${errs.length-5} more</div>`:""}</div>`}).join("")||`<p class="muted">No lost points. Nice.</p>`}
   </div>
   <div class="grid2">
-   <div class="panel stack"><h2>Mastery by concept</h2>
-    ${Object.entries(concepts).sort((x,y)=>x[1].e/x[1].m-y[1].e/y[1].m).map(([k,v])=>{const f=v.m?v.e/v.m:0;return `<div class="concept"><span>${esc(k)} <span class="small muted">Q${v.qs.map(esc).join(", Q")}</span></span><div class="bar"><i style="width:${pct(f,1)}%;background:${f<.6?"var(--bad)":f<.8?"var(--warn)":"var(--good)"}"></i></div><span class="num small">${pct(f,1)}%</span></div>`}).join("")}
+   <div class="panel stack"><h2>Mastery by concept</h2>${LEGEND}
+    ${Object.entries(concepts).map(([k,v])=>({k,v,c:levelCounts(a,v.qs)})).sort((x,y)=>(x.c.m/(x.c.n||1))-(y.c.m/(y.c.n||1))).map(({k,v,c})=>`<div class="concept lv"><span>${esc(k)} <span class="small muted">Q${v.qs.map(esc).join(", Q")}</span></span>${stackBar(c)}<span class="num small" title="Students who reached mastery">${c.m}/${c.n}</span></div>`).join("")}
    </div>
    <div class="panel stack"><h2>Types of errors</h2>
     ${tcount.map(([k,n])=>`<div class="concept"><span>${esc(ERR_LABEL[k]||k)}</span><div class="bar"><i style="width:${pct(n,tmax)}%"></i></div><span class="num small">${n}</span></div>`).join("")||`<p class="muted">None.</p>`}
     <p class="small muted">Counts every question where a student lost points, by the kind of mistake that started it.</p>
    </div>
   </div>
-  ${Object.keys(stds).length?`<div class="panel stack"><div class="spread"><h2>Mastery by standard</h2><span class="small muted">${"Common Core"} · below 80% needs reteaching</span></div>
-    ${Object.entries(stds).sort((x,y)=>x[1].e/x[1].m-y[1].e/y[1].m).map(([k,v])=>{const f=v.m?v.e/v.m:0;const below=a.students.filter(s=>{const its=s.items.filter(i=>v.qs.includes(i.q));const e=its.reduce((x,i)=>x+i.earned,0),m=its.reduce((x,i)=>x+i.max,0);return m&&e/m<.8}).map(s=>s.name.split(" ")[0]);
-      return `<div class="stack" style="gap:4px"><div class="concept"><span><span class="mono">${esc(k)}</span> <span class="small muted">${esc(v.desc)} · Q${v.qs.map(esc).join(", Q")}</span></span><div class="bar"><i style="width:${pct(f,1)}%;background:${f<.6?"var(--bad)":f<.8?"var(--warn)":"var(--good)"}"></i></div><span class="num small">${pct(f,1)}%</span></div>${below.length?`<div class="small muted">Not yet: ${esc(below.join(", "))}</div>`:""}</div>`}).join("")}
+  ${Object.keys(stds).length?`<div class="panel stack"><div class="spread"><h2>Mastery by standard</h2><span class="small muted">Common Core · how many students are at each level</span></div>${LEGEND}
+    ${Object.entries(stds).map(([k,v])=>({k,v,c:levelCounts(a,v.qs)})).sort((x,y)=>(x.c.m/(x.c.n||1))-(y.c.m/(y.c.n||1))).map(({k,v,c})=>`<div class="stack" style="gap:4px"><div class="concept lv"><span><span class="mono">${esc(k)}</span> <span class="small muted">${esc(v.desc)} · Q${v.qs.map(esc).join(", Q")}</span></span>${stackBar(c)}<span class="num small" title="Students who reached mastery">${c.m}/${c.n}</span></div>${c.who.length?`<div class="small muted">Not yet: ${esc(c.who.join(", "))}</div>`:""}</div>`).join("")}
   </div>`:""}
   <div class="panel stack"><div class="spread"><h2>Student × question</h2><span class="small muted">Darker red = fewer points. Click a cell to open that student.</span></div>
    <div class="tablebox"><table class="heat"><thead><tr><th class="name">Student</th>${a.questions.map(q=>`<th title="${esc(q.concept)}">Q${esc(q.n)}</th>`).join("")}<th>Total</th></tr></thead><tbody>
@@ -691,7 +747,7 @@ function viewToddle(a){
    </tbody></table></div>
    ${missing.length?`<div class="small muted">No graded paper for: ${esc(missing.map(r=>r.name).join(", "))}</div>`:""}
    <label class="row small" style="gap:8px"><input type="checkbox" id="td-fb" style="width:auto" ${T.withFeedback?"checked":""}> Include each student's feedback as a comment in Toddle</label>
-   <div class="row"><button class="btn primary" data-act="tdsend" ${T.busy||!ready||dup?"disabled":""}>${T.busy?"Sending…":`Send ${ready} score${ready===1?"":"s"} to Toddle`}</button><button class="btn" data-act="tdroster" ${T.busy?"disabled":""}>Reload class list</button>${dup?'<span class="small" style="color:var(--bad)">Fix students matched twice first.</span>':`<span class="small muted">Scores go in as ${fmt(M)}-point grades in a "${esc(a.title)}" column. Sending again updates them.</span>`}</div>`}
+   <div class="row">${a.students.some(x=>x.toddleId&&!x.reviewed)?`<span class="small muted" style="flex-basis:100%">${a.students.filter(x=>x.toddleId&&!x.reviewed).length} paper(s) not yet marked reviewed.</span>`:""}<button class="btn primary" data-act="tdsend" ${T.busy||!ready||dup?"disabled":""}>${T.busy?"Sending…":`Send ${ready} score${ready===1?"":"s"} to Toddle`}</button><button class="btn" data-act="tdroster" ${T.busy?"disabled":""}>Reload class list</button>${dup?'<span class="small" style="color:var(--bad)">Fix students matched twice first.</span>':`<span class="small muted">Scores go in as ${fmt(M)}-point grades in a "${esc(a.title)}" column. Sending again updates them.</span>`}</div>`}
   </div>`;
 }
 
@@ -718,15 +774,16 @@ function viewStudents(a){
   const s=a.students.find(x=>x.id===S.sel);const M=maxPts(a);const ro=a.demo?"disabled":"";
   const pages=s.pageKey?s.pageKey.split("+").map(id=>S.pages.find(p=>p.id===id)).filter(Boolean):[];
   return `<div class="split">
-  <div class="panel slist" role="list">${list.map(x=>`<button data-act="sel" data-sid="${esc(x.id)}" aria-current="${x.id===S.sel}"><span>${esc(x.name)}${flagged(x)?' <span class="pill warn">check</span>':""}</span><span class="num muted">${pct(total(x),M)}%</span></button>`).join("")}</div>
+  <div class="panel slist" role="list"><div class="small muted" style="padding:4px 10px">Reviewed ${a.students.filter(x=>x.reviewed).length} of ${a.students.length}</div>${list.map(x=>`<button data-act="sel" data-sid="${esc(x.id)}" aria-current="${x.id===S.sel}"><span>${x.reviewed?'<span class="rv" title="Reviewed">✓</span> ':""}${esc(x.name)}${flagged(x)?' <span class="pill warn">check</span>':""}</span><span class="num muted">${pct(total(x),M)}%</span></button>`).join("")}</div>
   <div class="stack" style="min-width:0">
    <div class="panel stack">
     <div class="spread"><label class="f" style="flex:1 1 220px">Student name<input id="s-name" value="${esc(s.name)}" ${ro}></label><div class="tile" style="padding:8px 14px"><div class="k">Score</div><div class="v num" style="font-size:22px">${fmt(total(s))} / ${M}</div></div></div>
+    <div class="row"><button class="btn ${s.reviewed?"":"primary"}" data-act="review" ${ro}>${s.reviewed?"✓ Reviewed (undo)":"Mark reviewed"}</button><button class="btn" data-act="reviewnext" ${ro}>Mark reviewed & next</button><span class="small muted">Use this to track which papers you've checked before sending grades.</span></div>
     ${pages.length?`<div class="pages">${pages.map(p=>`<img src="${p.url}" alt="${esc(p.label)}" data-zoom="${p.url}">`).join("")}</div>`:""}
     <div class="tablebox"><table class="items"><thead><tr><th>Q</th><th>Pts</th><th>What happened</th><th>Note to student</th></tr></thead><tbody>
     ${s.items.map((i,k)=>`<tr><td class="mono">${esc(i.q)}${i.confidence==="low"?'<br><span class="pill warn" title="Handwriting was hard to read. Check this one.">check</span>':""}</td>
      <td class="pts"><input type="number" min="0" max="${i.max}" step="0.5" value="${i.earned}" data-ii="${k}" data-if="earned" aria-label="Points for Q${esc(i.q)}" ${ro}><div class="small muted num">of ${i.max}</div></td>
-     <td>${i.error_type!=="none"?`<span class="pill ${i.status==="incorrect"||i.status==="blank"?"bad":"warn"}">${esc(ERR_LABEL[i.error_type]||i.error_type)}</span> `:'<span class="pill good">Correct</span> '}${esc(i.error_step)}${i.student_answer?`<div class="small muted">Read as: <span class="mono">${esc(i.student_answer)}</span></div>`:""}</td>
+     <td>${i.error_type!=="none"?`<span class="pill ${i.status==="incorrect"||i.status==="blank"?"bad":"warn"}">${esc(ERR_LABEL[i.error_type]||i.error_type)}</span> `:'<span class="pill good">Correct</span> '}${esc(i.error_step)}${(()=>{const r=dedRows(i);return r.length?`<ul class="ded">${r.map(x=>`<li class="${x.adj?"adj":""}"><b>${x.points>0?"−"+fmt(x.points):"+"+fmt(-x.points)}</b>${esc(x.reason)}</li>`).join("")}</ul>`:""})()}${i.student_answer?`<div class="small muted">Read as: <span class="mono">${esc(i.student_answer)}</span></div>`:""}</td>
      <td><textarea rows="2" data-ii="${k}" data-if="comment" ${ro}>${esc(i.comment)}</textarea></td></tr>`).join("")}
     </tbody></table></div>
    </div>
@@ -746,6 +803,7 @@ document.addEventListener("click",e=>{
   const z=e.target.closest("[data-zoom]");if(z){const lb=document.createElement("div");lb.className="lightbox";lb.innerHTML=`<img src="${z.dataset.zoom}" alt="">`;lb.onclick=()=>lb.remove();document.body.appendChild(lb);return}
   const t=e.target.closest("[data-tab]");if(t){S.tab=t.dataset.tab;S.confirmDel=false;render();window.scrollTo(0,0);return}
   const b=e.target.closest("[data-act]");if(!b)return;const act=b.dataset.act;const a=S.cur;
+  if(act!=="regrade")S.confirmRegrade=false;
   if(act!=="delA")S.confirmDel=false;if(act!=="delS")S.confirmDelS=null;
   if(act==="new")newAssessment();
   else if(act==="addq"){const last=a.questions[a.questions.length-1];a.questions.push({n:String(a.questions.length+1),prompt:"",concept:last?last.concept:"",points:2,answer:""});saveKeySoon();render()}
@@ -755,6 +813,10 @@ document.addEventListener("click",e=>{
     if(canSave())queueWrite(async()=>{for(const sid of sids)await aRef(id).collection("students").doc(sid).delete();await aRef(id).delete()});
     if(S.cur&&!S.cur.demo)openAssessment(S.cur.id);else{S.tab="insights";render()}toast("Assessment deleted")}
   else if(act==="gradeall")gradeAll();
+  else if(act==="profile"){S.profileOpen=!S.profileOpen;render()}
+  else if(act==="regrade"){if(!S.confirmRegrade){S.confirmRegrade=true;renderProgress();return}S.confirmRegrade=false;for(const g of groups()){const st=S.pageMap[g.key];if(st&&st.status==="done")st.status="ready"}gradeAll()}
+  else if(act==="review"){const s=a.students.find(x=>x.id===S.sel);if(s&&!a.demo){s.reviewed=!s.reviewed;saveStudentSoon(s);render()}}
+  else if(act==="reviewnext"){const list=[...a.students].sort((x,y)=>x.name.localeCompare(y.name));const i=list.findIndex(x=>x.id===S.sel);const s=list[i];if(s&&!a.demo){s.reviewed=true;saveStudentSoon(s);const nx=list.slice(i+1).find(x=>!x.reviewed)||list.find(x=>!x.reviewed&&x.id!==s.id)||list[i+1];if(nx)S.sel=nx.id;render();window.scrollTo(0,0)}}
   else if(act==="stop"){if(S.grading){S.grading.stopped=true;S.grading.ctl.abort()}}
   else if(act==="clearpages"){S.pages.forEach(p=>URL.revokeObjectURL(p.url));S.pages=[];S.pageMap={};render()}
   else if(act==="open"){S.sel=b.dataset.sid;S.tab="students";render();window.scrollTo(0,0)}
@@ -804,6 +866,11 @@ document.addEventListener("change",e=>{const el=e.target;const a=S.cur;
   else if(el.id==="cp-score"){S.copy.score=el.checked}
   else if(el.id==="cp-items"){S.copy.items=el.checked}
   else if(el.dataset.tdSid&&a&&!a.demo){const s=a.students.find(x=>x.id===el.dataset.tdSid);if(s){s.toddleId=el.value||null;S.toddle.results=null;saveStudentSoon(s);render()}}
+  else if(el.id==="pf-partial"&&a&&!a.demo){a.profile={...getProfile(a),partial:el.checked};saveKeySoon();render()}
+  else if(el.id==="pf-carry"&&a&&!a.demo){a.profile={...getProfile(a),carry:el.checked};saveKeySoon()}
+  else if(el.id==="pf-methods"&&a&&!a.demo){a.profile={...getProfile(a),methods:el.value};saveKeySoon();render()}
+  else if(el.id==="pf-tone"&&a&&!a.demo){a.profile={...getProfile(a),tone:el.value};saveKeySoon();render()}
+  else if(el.id==="pf-hints"&&a&&!a.demo){a.profile={...getProfile(a),hints:el.value};saveKeySoon();render()}
   else if(el.id==="g-per"){S.perStudent=+el.value;renderGroups();renderProgress()}
   else if(el.id==="g-detail"){S.detail=el.value==="1"}
   else if(el.id==="g-tier"){S.tier=el.value}
